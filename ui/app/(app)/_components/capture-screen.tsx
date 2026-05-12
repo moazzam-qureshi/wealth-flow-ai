@@ -191,8 +191,10 @@ export function CaptureScreen(props: {
     fileRef.current && (fileRef.current.value = "");
   }
 
+  // No `capture` attribute: transaction screenshots are already in the gallery,
+  // so we want the OS picker (Photos / Files / Camera) — `capture` would force the camera.
   const hiddenInput = (
-    <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])} />
+    <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])} />
   );
 
   // ── SAVED — micro-payoff, then ready for the next ──────────────────────────
