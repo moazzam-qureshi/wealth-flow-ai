@@ -62,7 +62,15 @@ html,
 body {
   background: var(--bg);
   color: var(--fg);
+  /* never let a stray wide element cause a horizontal scroll on mobile */
+  overflow-x: hidden;
 }
+
+/* form controls fill their box and don't blow it out with long text */
+input, select, textarea, button {
+  max-width: 100%;
+}
+select { text-overflow: ellipsis; }
 
 body {
   font-family: var(--font-sans);

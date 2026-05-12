@@ -41,6 +41,17 @@ const TXN_TYPES = [
   ["investment", "Investment"],
 ] as const;
 
+const ACCOUNT_TYPES = [
+  ["fintech", "Fintech app"],
+  ["local_bank", "Local bank"],
+  ["usd_bank", "USD bank"],
+  ["brokerage", "Brokerage (stocks)"],
+  ["crypto_exchange", "Crypto exchange"],
+  ["stablecoin_wallet", "Stablecoin wallet"],
+  ["cash", "Cash"],
+] as const;
+const COMMON_CURRENCIES = ["PKR", "USD", "EUR", "GBP", "AED", "USDT", "USDC"];
+
 function isoLocal(d: Date) {
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
@@ -67,7 +78,10 @@ export function CaptureScreen(props: {
   const [error, setError] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [extract, setExtract] = useState<ExtractResponse | null>(null);
+  const [accounts, setAccounts] = useState<Account[]>([]); // local copy so a freshly-created one shows up
   const [accountId, setAccountId] = useState("");
+  const [newAccount, setNewAccount] = useState<{ name: string; type: string; currency: string } | null>(null);
+  const [creatingAccount, setCreatingAccount] = useState(false);
   const [drafts, setDrafts] = useState<(ReviewTxn & { occurredLocal: string })[]>([]);
   const [savedCount, setSavedCount] = useState(0);
   const [payoff, setPayoff] = useState<{ netWorthUsd: number | null; monthlyBurnUsd: number | null } | null>(null);
@@ -94,9 +108,40 @@ export function CaptureScreen(props: {
 
   function enterReview(r: ExtractResponse) {
     setExtract(r);
+    setAccounts(r.accounts);
     setAccountId(r.suggestedAccountId ?? r.accounts[0]?.id ?? "");
+    setNewAccount(null);
+    // No matching account but the model detected an institution → prefill a "create" form.
+    if (!r.suggestedAccountId && r.accounts.length === 0 && r.detectedInstitution) {
+      const ccy = r.transactions[0]?.currency?.toUpperCase() || "PKR";
+      setNewAccount({ name: r.detectedInstitution, type: "fintech", currency: ccy });
+    }
     setDrafts(r.transactions.map((t) => ({ ...t, occurredLocal: t.occurredAt ? isoLocal(new Date(t.occurredAt)) : isoLocal(new Date()) })));
     setPhase("review");
+  }
+
+  async function createAccount() {
+    if (!newAccount || !newAccount.name.trim()) { setError("Give the account a name."); return; }
+    setCreatingAccount(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/accounts", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: newAccount.name.trim(), type: newAccount.type, currency: newAccount.currency }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Couldn't create the account");
+      const acc = data.account as { id: string; name: string; currency: string; institution: string | null };
+      setAccounts((a) => [...a, { id: acc.id, name: acc.name, currency: acc.currency, institution: acc.institution }]);
+      setAccountId(acc.id);
+      setNewAccount(null);
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't create the account");
+    } finally {
+      setCreatingAccount(false);
+    }
   }
 
   async function handleFile(file: File) {
@@ -124,7 +169,7 @@ export function CaptureScreen(props: {
   async function saveOne(i: number) {
     setError(null);
     const t = drafts[i];
-    if (!accountId) return setError("Pick an account first.");
+    if (!accountId) return setError(newAccount ? 'Tap "Create & use" to add the account first.' : "Pick an account first.");
     if (!t.externalId) return setError("This receipt has no reference id — type it in (look on the receipt) so duplicates can be caught.");
     try {
       const res = await fetch("/api/transactions", {
@@ -182,6 +227,8 @@ export function CaptureScreen(props: {
   function reset() {
     setPhase("idle");
     setExtract(null);
+    setAccounts([]);
+    setNewAccount(null);
     setDrafts([]);
     setSavedCount(0);
     setPayoff(null);
@@ -268,16 +315,59 @@ export function CaptureScreen(props: {
         {error && <ErrorBanner>{error}</ErrorBanner>}
         {transferPrompt && <TransferPrompt prompt={transferPrompt} onPick={linkTransfer} />}
 
-        <div className="card wf-rise p-4">
-          <label className="text-[11px] uppercase tracking-[0.1em] text-[var(--fg-mut)]">
+        <div className="card wf-rise space-y-3 p-4">
+          <label className="block text-[11px] uppercase tracking-[0.1em] text-[var(--fg-mut)]">
             Account {extract.detectedInstitution ? <span className="text-[var(--mint)] normal-case tracking-normal">· detected {extract.detectedInstitution}</span> : ""}
           </label>
-          <select className="mt-1.5 w-full px-3 py-2.5 text-sm" value={accountId} onChange={(e) => setAccountId(e.target.value)}>
-            <option value="">— choose —</option>
-            {extract.accounts.map((a) => (
+          <select
+            className="w-full truncate px-3 py-2.5 text-sm"
+            value={newAccount ? "__new__" : accountId}
+            onChange={(e) => {
+              if (e.target.value === "__new__") {
+                const ccy = drafts[0]?.currency?.toUpperCase() || "PKR";
+                setNewAccount({ name: extract.detectedInstitution ?? "", type: "fintech", currency: ccy });
+              } else {
+                setNewAccount(null);
+                setAccountId(e.target.value);
+              }
+            }}
+          >
+            {accounts.length === 0 && <option value="">— no accounts yet —</option>}
+            {accounts.length > 0 && <option value="">— choose —</option>}
+            {accounts.map((a) => (
               <option key={a.id} value={a.id}>{a.name} ({a.currency}){a.institution ? ` · ${a.institution}` : ""}</option>
             ))}
+            <option value="__new__">+ New account…</option>
           </select>
+
+          {newAccount && (
+            <div className="space-y-2.5 rounded-xl border border-dashed border-line bg-[var(--bg-soft)] p-3">
+              <div className="text-[11px] uppercase tracking-[0.1em] text-[var(--fg-mut)]">New account</div>
+              <input
+                className="w-full px-3 py-2.5 text-sm"
+                value={newAccount.name}
+                onChange={(e) => setNewAccount((n) => (n ? { ...n, name: e.target.value } : n))}
+                placeholder="Account name (e.g. ElevatePay)"
+              />
+              <div className="grid grid-cols-2 gap-2.5">
+                <select className="w-full px-3 py-2.5 text-sm" value={newAccount.type} onChange={(e) => setNewAccount((n) => (n ? { ...n, type: e.target.value } : n))}>
+                  {ACCOUNT_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                </select>
+                <select className="w-full px-3 py-2.5 text-sm" value={newAccount.currency} onChange={(e) => setNewAccount((n) => (n ? { ...n, currency: e.target.value } : n))}>
+                  {COMMON_CURRENCIES.includes(newAccount.currency) ? null : <option value={newAccount.currency}>{newAccount.currency}</option>}
+                  {COMMON_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <button className={buttonPrimary("!px-4 !py-2 !text-[13px]")} disabled={creatingAccount} onClick={createAccount}>
+                  {creatingAccount ? "Creating…" : "Create & use"}
+                </button>
+                {accounts.length > 0 && (
+                  <button className={buttonGhost("!px-3 !py-2 !text-[13px]")} onClick={() => setNewAccount(null)}>Cancel</button>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {drafts.length === 0 && <div className="text-sm text-[var(--fg-mut)]">All transactions handled.</div>}
@@ -326,15 +416,13 @@ export function CaptureScreen(props: {
                 />
               </Field>
             </div>
-            <div className="flex items-end justify-between gap-2">
-              <Field label="Date / time">
-                <input type="datetime-local" className="px-3 py-2.5 text-sm" value={t.occurredLocal} onChange={(e) => patchDraft(i, { occurredLocal: e.target.value })} />
-              </Field>
-              <div className="flex items-center gap-2">
-                <span className="readout text-[11px] text-[var(--fg-faint)]">{Math.round(t.confidence * 100)}%</span>
-                <button className={buttonGhost("!px-3 !py-2 !text-[13px]")} onClick={() => setDrafts((d) => d.filter((_, idx) => idx !== i))}>Skip</button>
-                <button className={buttonPrimary("!px-4 !py-2 !text-[13px]")} onClick={() => saveOne(i)}>Save</button>
-              </div>
+            <Field label="Date / time">
+              <input type="datetime-local" className="w-full px-3 py-2.5 text-sm" value={t.occurredLocal} onChange={(e) => patchDraft(i, { occurredLocal: e.target.value })} />
+            </Field>
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <span className="readout mr-auto text-[11px] text-[var(--fg-faint)]">{Math.round(t.confidence * 100)}% sure</span>
+              <button className={buttonGhost("!px-3 !py-2 !text-[13px]")} onClick={() => setDrafts((d) => d.filter((_, idx) => idx !== i))}>Skip</button>
+              <button className={buttonPrimary("!px-5 !py-2 !text-[13px]")} onClick={() => saveOne(i)}>Save</button>
             </div>
           </div>
         ))}
