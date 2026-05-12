@@ -1,9 +1,10 @@
 # WealthFlow AI — single flat compose. Deployed via Coolify on a self-hosted VPS:
 # Coolify/Traefik own ingress + TLS + routing, so there are NO custom networks,
-# NO published ports, and NO reverse-proxy config here. Only `app` is web-facing.
+# NO published ports, and NO reverse-proxy config here. Only `app` is web-facing
+# (Coolify detects it from the EXPOSE in ui/Dockerfile and wires Traefik to it).
 #
-# Locally: `cp .env.example .env && docker compose up --build`
-#   app  → http://localhost:3000   (uncomment the ports line below for local use)
+# Locally: `cp .env.example .env && docker compose -f docker-compose.yml -f docker-compose.local.yml up --build`
+#   app  → http://localhost:3000   (the override file publishes the ports)
 
 services:
   app:
@@ -24,11 +25,6 @@ services:
         condition: service_healthy
       seaweedfs:
         condition: service_started
-    # Published to localhost for running the full stack locally. Coolify exposes
-    # the service via Traefik instead — this mapping is harmless there (bound to
-    # 127.0.0.1, so not internet-facing even on the VPS).
-    ports:
-      - "127.0.0.1:3000:3000"
 
   postgres:
     image: postgres:17-alpine
@@ -39,10 +35,6 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-wealthflow}
     volumes:
       - pgdata:/var/lib/postgresql/data
-    # Published for local dev convenience (so `npm run dev` in ui/ can reach it).
-    # Coolify deploys the app+db inside the same network — this mapping is harmless there.
-    ports:
-      - "127.0.0.1:5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-wealthflow} -d ${POSTGRES_DB:-wealthflow}"]
       interval: 5s

@@ -1,0 +1,14 @@
+# Local-only override — publishes ports for running the full stack on your machine.
+# NOT used by Coolify (it only reads docker-compose.yml). Run with:
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
+#   app      → http://localhost:3000
+#   postgres → localhost:5432   (so `npm run dev` in ui/ can reach it)
+
+services:
+  app:
+    ports:
+      - "127.0.0.1:3000:3000"
+
+  postgres:
+    ports:
+      - "127.0.0.1:5432:5432"
