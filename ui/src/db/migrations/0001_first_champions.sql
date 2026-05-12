@@ -1,1 +1,0 @@
-ALTER TYPE "public"."account_type" ADD VALUE 'brokerage' BEFORE 'crypto_exchange';

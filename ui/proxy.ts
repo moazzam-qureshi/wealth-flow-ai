@@ -1,8 +1,9 @@
 /**
- * Next.js 16 "proxy" (formerly middleware). Single-user gate: if there's no Better
- * Auth session cookie, redirect to /login. This is an *optimistic* check (cookie
+ * Next.js 16 "proxy" (formerly middleware). Auth gate: if there's no Better Auth
+ * session cookie, redirect to /login. This is an *optimistic* check (cookie
  * presence only, no DB hit) per Better Auth's guidance — route handlers / server
- * components still verify the session for anything sensitive.
+ * components still verify the session AND scope every query to the signed-in user
+ * (owner_id), which is what actually isolates one user's data from another's.
  *
  * Excluded from the gate (see `matcher`): /login, all of /api/* (route handlers do
  * their own auth — `requireApiUser` returns 401 JSON, not a redirect), and Next's

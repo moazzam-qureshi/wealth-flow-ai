@@ -13,9 +13,9 @@ const patchSchema = z.object({
 });
 
 export const PATCH = handler(async (req: Request, ctx: RouteContext<"/api/recommendations/[id]">) => {
-  await requireApiUser();
+  const user = await requireApiUser();
   const { id } = await ctx.params;
-  if (!(await getRecommendation(id))) throw new ApiError(404, "Recommendation not found");
+  if (!(await getRecommendation(user.id, id))) throw new ApiError(404, "Recommendation not found");
 
   const parsed = patchSchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) throw new ApiError(400, parsed.error.issues[0]?.message ?? "Invalid body");
@@ -23,7 +23,7 @@ export const PATCH = handler(async (req: Request, ctx: RouteContext<"/api/recomm
   const snoozedUntil = parsed.data.snoozedUntil ? new Date(parsed.data.snoozedUntil) : undefined;
   if (snoozedUntil && Number.isNaN(snoozedUntil.getTime())) throw new ApiError(400, "Invalid snoozedUntil");
 
-  const rec = await updateRecommendationStatus(id, parsed.data.status as never, {
+  const rec = await updateRecommendationStatus(user.id, id, parsed.data.status as never, {
     snoozedUntil,
     outcomeNote: parsed.data.outcomeNote,
   });

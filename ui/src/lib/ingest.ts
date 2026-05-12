@@ -38,7 +38,7 @@ export type ReviewPayload = {
   notes: string | null;
 };
 
-export async function processUpload(uploadRow: Upload, accountHint?: string | null): Promise<ReviewPayload> {
+export async function processUpload(ownerId: string, uploadRow: Upload, accountHint?: string | null): Promise<ReviewPayload> {
   if (uploadRow.contentType === "application/pdf") {
     await markFailed(uploadRow.id, "PDF extraction not supported yet — upload a screenshot image");
     throw new Error("PDF extraction not supported yet — upload a screenshot image");
@@ -53,8 +53,10 @@ export async function processUpload(uploadRow: Upload, accountHint?: string | nu
     throw err;
   }
 
-  const allAccounts = await listAccounts();
-  let accountId = accountHint || uploadRow.detectedAccountId || null;
+  const allAccounts = await listAccounts(ownerId);
+  const ownsAccount = (id: string | null | undefined) => !!id && allAccounts.some((a) => a.id === id);
+  // only honor an account id that's actually one of this user's accounts
+  let accountId: string | null = ownsAccount(accountHint) ? accountHint! : ownsAccount(uploadRow.detectedAccountId) ? uploadRow.detectedAccountId : null;
   if (!accountId && extraction.detectedInstitution) {
     const needle = extraction.detectedInstitution.toLowerCase();
     const match = allAccounts.find(
@@ -70,7 +72,7 @@ export async function processUpload(uploadRow: Upload, accountHint?: string | nu
   for (const t of extraction.transactions) {
     let duplicateOf: string | null = null;
     if (accountId && t.externalId) {
-      const existing = await findByExternalId(accountId, t.externalId);
+      const existing = await findByExternalId(ownerId, accountId, t.externalId);
       duplicateOf = existing?.id ?? null;
     }
     reviewTxns.push({

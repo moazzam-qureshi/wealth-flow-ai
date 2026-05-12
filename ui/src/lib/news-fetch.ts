@@ -1,10 +1,12 @@
 /**
  * News ingestion (Layer 3, v1). Pulls the curated free RSS feeds, takes recent
  * items not seen before, and runs them through the LLM to get: a short summary,
- * relevance tags, and a one-line "how this affects you" note keyed off the user's
- * profile (geography, currencies, capability graph). Informational only — this
- * never auto-fires "do X now" advice; the weekly-suggestions agent reads it as
- * grounding context.
+ * relevance tags, and a one-line "how this affects a user like ours" note. The
+ * `news_items` table is GLOBAL (shared across users — it's market context, not
+ * personal data), so the relevance note is written against the product's typical
+ * audience (emerging-market / multi-currency freelancers & remote workers), not a
+ * specific person's profile. Informational only — this never auto-fires "do X now"
+ * advice; the weekly-suggestions agent reads it as grounding context per user.
  *
  * Triggered by POST /api/cron/fetch-news (Coolify scheduled task / manual).
  *
@@ -16,7 +18,6 @@ import { z } from "zod";
 import { inArray } from "drizzle-orm";
 import { db } from "../db";
 import { newsItems } from "../db/schema";
-import { getProfileNormalized } from "../db/profile";
 import { textModel } from "../mastra/llm";
 import { RSS_FEEDS } from "./rss-feeds";
 
@@ -64,17 +65,16 @@ const analysisSchema = z.object({
       relevanceTags: z
         .array(z.string())
         .describe("short tags like 'PKR', 'inflation', 'SBP', 'crypto-regulation', 'freelance', 'USD', 'remittances', 'sanctions', 'AI-industry' — only ones that genuinely apply"),
-      affectsUser: z.boolean().describe("does this plausibly affect THIS user's financial situation?"),
+      affectsUser: z.boolean().describe("does this plausibly affect the financial situation of a typical user of this app (an emerging-market / multi-currency freelancer or remote worker)?"),
       exposureNote: z
         .string()
         .nullable()
-        .describe("if affectsUser, ONE short sentence on *how* it affects them given their profile (e.g. 'PKR devaluation pressure → your local-currency savings lose purchasing power'); null if not relevant"),
+        .describe("if affectsUser, ONE short sentence on *how* it affects such a user (e.g. 'PKR devaluation pressure → local-currency savings lose purchasing power'); null if not relevant"),
     }),
   ),
 });
 
 export async function fetchAndStoreNews(): Promise<{ pulled: number; new: number; analyzed: number }> {
-  const profile = await getProfileNormalized();
   const raw = await pullFeeds();
 
   // dedup against what we already have
@@ -93,14 +93,14 @@ export async function fetchAndStoreNews(): Promise<{ pulled: number; new: number
 
   if (fresh.length === 0) return { pulled: raw.length, new: 0, analyzed: 0 };
 
-  const profileBlurb = `User profile: geography=${profile.geography || "(not recorded)"}, home currency=${profile.homeCurrency}, display currency=${profile.displayCurrencyPref}. Capability graph (each: yes|no|unknown — treat 'unknown' as 'maybe', not 'no'): ${JSON.stringify(profile.capabilityGraph)}. They are an internet-native freelancer/remote worker operating in a hybrid / emerging-market financial reality. Do NOT assume their access from geography — use the capability graph.`;
+  const audienceBlurb = `Audience: internet-native freelancers / remote workers in emerging or hybrid markets — typically holding a local currency under inflation pressure plus USD via fintech rails (Payoneer, Wise) and sometimes stablecoins (USDT/USDC), receiving cross-border income. Pakistan/PKR is the canonical case but not the only one. Don't assume any one person's exact access; write the note for this general profile.`;
 
   const { object } = await generateObject({
     model: textModel(),
     schema: analysisSchema,
     system:
-      "You filter macro/economic news for relevance to a specific person and write a one-line 'how this affects you' note. Be conservative: most news does NOT meaningfully affect them — set affectsUser=false and exposureNote=null in that case. Only flag things that touch their currencies, their cross-border payment rails, the freelance/remote economy, crypto regulation where they operate, or major shocks (devaluation, sanctions, banking restrictions, inflation moves).",
-    prompt: `${profileBlurb}\n\nHere are recent news items. For EACH, return a summary, relevance tags, whether it affects this user, and (if so) a one-line exposure note.\n\n${fresh
+      "You filter macro/economic news for relevance to a particular kind of user and write a one-line 'how this affects them' note. Be conservative: most news does NOT meaningfully affect them — set affectsUser=false and exposureNote=null in that case. Only flag things that touch their currencies, their cross-border payment rails, the freelance/remote economy, crypto regulation in markets they operate in, or major shocks (devaluation, sanctions, banking restrictions, inflation moves).",
+    prompt: `${audienceBlurb}\n\nHere are recent news items. For EACH, return a summary, relevance tags, whether it affects this kind of user, and (if so) a one-line exposure note.\n\n${fresh
       .map((f, i) => `[${i + 1}] (${f.area}) ${f.title}\nURL: ${f.url}\n${f.snippet}`)
       .join("\n\n")}`,
   });

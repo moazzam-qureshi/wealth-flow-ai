@@ -2,8 +2,8 @@ import { handler, json, requireApiUser } from "@/src/lib/api";
 import { listRecommendations } from "@/src/db/recommendations";
 
 export const GET = handler(async () => {
-  await requireApiUser();
-  const recs = await listRecommendations();
+  const user = await requireApiUser();
+  const recs = await listRecommendations(user.id);
   return json({
     recommendations: recs.map((r) => ({
       id: r.id,

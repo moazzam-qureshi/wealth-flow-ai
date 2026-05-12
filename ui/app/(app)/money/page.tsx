@@ -1,18 +1,19 @@
 import Link from "next/link";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { listAccounts } from "@/src/db/accounts";
 import { computeMetrics } from "@/src/db/cashflow";
 import { db } from "@/src/db";
 import { recommendations } from "@/src/db/schema";
+import { requireUser } from "@/src/lib/session";
 import { Card, SectionLabel, Stat, RunwayMeter, ExposureBar, CcyAvatar, fmtMoney } from "../_components/ui";
 
 export const dynamic = "force-dynamic";
 
-async function topNewRecommendation() {
+async function topNewRecommendation(ownerId: string) {
   const rows = await db
     .select({ id: recommendations.id, title: recommendations.title, body: recommendations.body })
     .from(recommendations)
-    .where(eq(recommendations.status, "new"))
+    .where(and(eq(recommendations.ownerId, ownerId), eq(recommendations.status, "new")))
     .orderBy(desc(recommendations.createdAt))
     .limit(1);
   return rows[0] ?? null;
@@ -21,7 +22,12 @@ async function topNewRecommendation() {
 // "Money" — the operator's instrument panel. Net worth (hero), the USD↔home FX
 // spread, runway fuel-gauge, currency-exposure light-strip, cashflow, accounts.
 export default async function MoneyScreen() {
-  const [accounts, m, topRec] = await Promise.all([listAccounts(), computeMetrics(), topNewRecommendation()]);
+  const user = await requireUser();
+  const [accounts, m, topRec] = await Promise.all([
+    listAccounts(user.id),
+    computeMetrics(user.id),
+    topNewRecommendation(user.id),
+  ]);
   const nw = m.netWorth;
   const haveRates = nw.usdInterbank !== null || nw.usdOpenMarket !== null;
   const primaryUsd = nw.usdOpenMarket ?? nw.usdInterbank;

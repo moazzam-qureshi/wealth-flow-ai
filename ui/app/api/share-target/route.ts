@@ -35,7 +35,7 @@ export async function POST(req: Request) {
       await putBlob(key, bytes, mime);
       const [row] = await db
         .insert(uploads)
-        .values({ blobKey: key, contentType: mime, byteSize: file.size, status: "pending" })
+        .values({ ownerId: session.user.id, blobKey: key, contentType: mime, byteSize: file.size, status: "pending" })
         .returning();
       uploadId = row.id;
     }

@@ -15,15 +15,15 @@ const createSchema = z.object({
 });
 
 export const GET = handler(async () => {
-  await requireApiUser();
-  const accounts = await listAccounts({ includeArchived: true });
+  const user = await requireApiUser();
+  const accounts = await listAccounts(user.id, { includeArchived: true });
   return json({ accounts });
 });
 
 export const POST = handler(async (req: Request) => {
-  await requireApiUser();
+  const user = await requireApiUser();
   const parsed = createSchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) throw new ApiError(400, parsed.error.issues[0]?.message ?? "Invalid body");
-  const account = await createAccount(parsed.data);
+  const account = await createAccount(user.id, parsed.data);
   return json({ account }, { status: 201 });
 });

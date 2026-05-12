@@ -21,7 +21,7 @@ const EXT_BY_MIME: Record<string, string> = {
  * confirms on /upload. Nothing is written to `transactions` here.
  */
 export const POST = handler(async (req: Request) => {
-  await requireApiUser();
+  const user = await requireApiUser();
 
   const form = await req.formData().catch(() => null);
   if (!form) throw new ApiError(400, "Expected multipart/form-data");
@@ -38,11 +38,11 @@ export const POST = handler(async (req: Request) => {
   const hintedAccountId = (form.get("accountId") as string | null) || null;
   const [uploadRow] = await db
     .insert(uploads)
-    .values({ blobKey: key, contentType: mime, byteSize: file.size, status: "pending", detectedAccountId: hintedAccountId })
+    .values({ ownerId: user.id, blobKey: key, contentType: mime, byteSize: file.size, status: "pending" })
     .returning();
 
   try {
-    const payload = await processUpload(uploadRow, hintedAccountId);
+    const payload = await processUpload(user.id, uploadRow, hintedAccountId);
     return json(payload);
   } catch (err) {
     throw new ApiError(422, err instanceof Error ? err.message : "Extraction failed");

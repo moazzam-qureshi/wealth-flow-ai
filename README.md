@@ -14,7 +14,7 @@ See `docs/product.md` for the full vision and the plan file for the v1 build.
 - **Postgres** — app tables + Mastra's `mastra_*` tables. Drizzle ORM (`ui/src/db/`).
 - **SeaweedFS** (S3-compatible) — uploaded screenshots. (Local dev falls back to the filesystem.)
 - **OpenRouter** — LLM provider: Qwen vision for screenshot extraction, Qwen text for the agents.
-- **Better Auth** — single-user email+password.
+- **Better Auth** — email+password. Multi-user: every account gets its own isolated data (all rows scoped by `owner_id` → `user.id`).
 - **Docker + Coolify** — deployed via Coolify/Traefik on a self-hosted VPS.
 
 ## Run it
@@ -67,9 +67,10 @@ npm run dev                               # http://localhost:3000
    - `curl -fsS -H "x-cron-secret: $CRON_SECRET" https://YOURDOMAIN/api/cron/fx-rates` — **daily**
    - `curl -fsS -H "x-cron-secret: $CRON_SECRET" https://YOURDOMAIN/api/cron/fetch-news` — **daily** (runs a few minutes — it's a batch LLM call)
    - `curl -fsS -H "x-cron-secret: $CRON_SECRET" https://YOURDOMAIN/api/cron/weekly-suggestions` — **weekly**
-6. **First run**: open the domain → `/login` → create your single account → add your
-   real accounts on `/accounts` → trigger `cron/fx-rates` once → upload a real
-   screenshot on `/upload` to confirm extraction → check the dashboard.
+6. **First run**: open the domain → `/login` → **Create one** → add your real
+   accounts on `/accounts` → trigger `cron/fx-rates` once → upload a real
+   screenshot on `/upload` to confirm extraction → check the dashboard. Anyone can
+   sign up; each account's data is isolated.
    On the phone: install the PWA (Add to Home Screen) → in a bank/fintech app,
    screenshot a transaction → Share → WealthFlow → it lands in the review flow.
 
@@ -80,7 +81,7 @@ wealth-flow-ai/
   ui/                  # the Next.js app (Mastra embedded)
     app/
       (app)/           # authenticated pages: dashboard, accounts, upload, news, suggestions, chat
-      login/           # the only unauthenticated page
+      login/           # the only unauthenticated page (sign in / sign up)
       api/             # accounts, uploads, transactions, metrics, recommendations, chat,
                        #   auth/[...all], share-target, cron/{fx-rates,fetch-news,weekly-suggestions}
       manifest.ts      # PWA manifest + Web Share Target

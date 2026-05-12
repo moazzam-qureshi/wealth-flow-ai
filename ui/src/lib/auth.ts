@@ -1,7 +1,9 @@
 /**
- * Better Auth — single-user email+password. No email verification (there's no
- * email provider here and it's just one account). The Drizzle adapter keeps the
- * user/session/account/verification tables in our normal migration set.
+ * Better Auth — multi-user email+password. Signup is open: anyone can create an
+ * account and gets their own isolated data (everything is scoped by `owner_id` →
+ * `user.id`). No email verification (there's no email provider wired up here yet).
+ * The Drizzle adapter keeps the user/session/account/verification tables in our
+ * normal migration set.
  *
  * Built lazily via `getAuth()` so `next build` doesn't evaluate it (and doesn't
  * need BETTER_AUTH_SECRET / DATABASE_URL at build time). Consumers call `getAuth()`
@@ -32,8 +34,7 @@ function build() {
     emailAndPassword: {
       enabled: true,
       requireEmailVerification: false,
-      // signup stays open — there's no /signup UI; you create the single account
-      // once from /login, then the proxy gate keeps everyone else out.
+      // signup is open — multi-user; each new account is fully isolated by owner_id.
     },
     secret: env.BETTER_AUTH_SECRET,
     baseURL: env.BETTER_AUTH_URL,

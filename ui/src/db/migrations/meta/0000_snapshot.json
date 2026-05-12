@@ -1,5 +1,5 @@
 {
-  "id": "98f86e28-b46e-442d-8aee-aeac6772d2ee",
+  "id": "8ab57bd8-e314-452d-b41a-cecf2c229d2f",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -122,6 +122,12 @@
           "notNull": true,
           "default": "gen_random_uuid()"
         },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
         "name": {
           "name": "name",
           "type": "text",
@@ -187,8 +193,38 @@
           "default": "now()"
         }
       },
-      "indexes": {},
-      "foreignKeys": {},
+      "indexes": {
+        "accounts_owner_idx": {
+          "name": "accounts_owner_idx",
+          "columns": [
+            {
+              "expression": "owner_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "accounts_owner_id_user_id_fk": {
+          "name": "accounts_owner_id_user_id_fk",
+          "tableFrom": "accounts",
+          "tableTo": "user",
+          "columnsFrom": [
+            "owner_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
@@ -392,12 +428,11 @@
       "name": "profile",
       "schema": "",
       "columns": {
-        "id": {
-          "name": "id",
+        "owner_id": {
+          "name": "owner_id",
           "type": "text",
           "primaryKey": true,
-          "notNull": true,
-          "default": "'me'"
+          "notNull": true
         },
         "geography": {
           "name": "geography",
@@ -449,7 +484,21 @@
         }
       },
       "indexes": {},
-      "foreignKeys": {},
+      "foreignKeys": {
+        "profile_owner_id_user_id_fk": {
+          "name": "profile_owner_id_user_id_fk",
+          "tableFrom": "profile",
+          "tableTo": "user",
+          "columnsFrom": [
+            "owner_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
@@ -466,6 +515,12 @@
           "primaryKey": true,
           "notNull": true,
           "default": "gen_random_uuid()"
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
         },
         "title": {
           "name": "title",
@@ -548,9 +603,44 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "recommendations_owner_created_idx": {
+          "name": "recommendations_owner_created_idx",
+          "columns": [
+            {
+              "expression": "owner_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
-      "foreignKeys": {},
+      "foreignKeys": {
+        "recommendations_owner_id_user_id_fk": {
+          "name": "recommendations_owner_id_user_id_fk",
+          "tableFrom": "recommendations",
+          "tableTo": "user",
+          "columnsFrom": [
+            "owner_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
@@ -652,6 +742,12 @@
           "primaryKey": true,
           "notNull": true,
           "default": "gen_random_uuid()"
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
         },
         "account_id": {
           "name": "account_id",
@@ -807,9 +903,15 @@
           "method": "btree",
           "with": {}
         },
-        "transactions_occurred_idx": {
-          "name": "transactions_occurred_idx",
+        "transactions_owner_occurred_idx": {
+          "name": "transactions_owner_occurred_idx",
           "columns": [
+            {
+              "expression": "owner_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
             {
               "expression": "occurred_at",
               "isExpression": false,
@@ -824,6 +926,19 @@
         }
       },
       "foreignKeys": {
+        "transactions_owner_id_user_id_fk": {
+          "name": "transactions_owner_id_user_id_fk",
+          "tableFrom": "transactions",
+          "tableTo": "user",
+          "columnsFrom": [
+            "owner_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
         "transactions_account_id_accounts_id_fk": {
           "name": "transactions_account_id_accounts_id_fk",
           "tableFrom": "transactions",
@@ -867,6 +982,12 @@
           "primaryKey": true,
           "notNull": true,
           "default": "gen_random_uuid()"
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
         },
         "blob_key": {
           "name": "blob_key",
@@ -932,8 +1053,37 @@
           "notNull": false
         }
       },
-      "indexes": {},
+      "indexes": {
+        "uploads_owner_idx": {
+          "name": "uploads_owner_idx",
+          "columns": [
+            {
+              "expression": "owner_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
+        "uploads_owner_id_user_id_fk": {
+          "name": "uploads_owner_id_user_id_fk",
+          "tableFrom": "uploads",
+          "tableTo": "user",
+          "columnsFrom": [
+            "owner_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
         "uploads_detected_account_id_accounts_id_fk": {
           "name": "uploads_detected_account_id_accounts_id_fk",
           "tableFrom": "uploads",
@@ -1080,6 +1230,7 @@
         "local_bank",
         "usd_bank",
         "fintech",
+        "brokerage",
         "crypto_exchange",
         "stablecoin_wallet",
         "cash"

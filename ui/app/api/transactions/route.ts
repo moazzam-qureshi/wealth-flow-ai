@@ -28,18 +28,18 @@ const saveSchema = z.object({
  * likely "other half of a transfer" candidates for the user to optionally link.
  */
 export const POST = handler(async (req: Request) => {
-  await requireApiUser();
+  const user = await requireApiUser();
   const parsed = saveSchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) throw new ApiError(400, parsed.error.issues[0]?.message ?? "Invalid body");
   const input = parsed.data;
 
-  if (!(await getAccount(input.accountId))) throw new ApiError(404, "Account not found");
+  if (!(await getAccount(user.id, input.accountId))) throw new ApiError(404, "Account not found");
   const occurredAt = new Date(input.occurredAt);
   if (Number.isNaN(occurredAt.getTime())) throw new ApiError(400, "Invalid occurredAt");
 
   let saved;
   try {
-    saved = await saveConfirmedTransaction({
+    saved = await saveConfirmedTransaction(user.id, {
       accountId: input.accountId,
       uploadId: input.uploadId ?? null,
       externalId: input.externalId ?? null,
@@ -57,13 +57,14 @@ export const POST = handler(async (req: Request) => {
     if ((err as { code?: string }).code === "DUPLICATE_TRANSACTION") {
       throw new ApiError(409, "A transaction with this reference already exists for this account");
     }
+    if (err instanceof Error && err.message === "ACCOUNT_NOT_FOUND") throw new ApiError(404, "Account not found");
     throw err;
   }
 
   // suggest transfer linking only for non-income/expense moves (or anything, really —
   // but income/expense are rarely transfers). We surface candidates regardless; the
   // UI decides whether to prompt.
-  const candidates = await findTransferCandidates(saved);
+  const candidates = await findTransferCandidates(user.id, saved);
 
   return json(
     {

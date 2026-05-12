@@ -1,9 +1,12 @@
 /**
  * WealthFlow AI — database schema (Drizzle / Postgres).
  *
- * Single-user app: there is no `users` table and no tenant column anywhere.
- * Mastra keeps its own `mastra_*` tables (storage + memory) via @mastra/pg — they
- * are NOT defined here; drizzle-kit only manages the tables in this file.
+ * Multi-tenant: per-user data tables (accounts, uploads, transactions,
+ * recommendations, profile) carry an `owner_id` → `user.id` (cascade delete).
+ * `fx_rates` and `news_items` are GLOBAL (market data, not personal). Better Auth
+ * owns `user/session/account/verification`. Mastra keeps its own `mastra_*` tables
+ * (storage + memory) via @mastra/pg — they are NOT defined here; drizzle-kit only
+ * manages the tables in this file.
  *
  * Money is stored as `numeric` (arbitrary precision) and read back as a string by
  * the `postgres` driver — never use JS floats for balances/amounts. Helpers in
@@ -74,8 +77,13 @@ export const recommendationStatusEnum = pgEnum("recommendation_status", [
 // Layer 1 (Financial Reality Mapping) made concrete: the set of financial rails
 // the user actually has. Entered manually, rarely changes.
 
-export const accounts = pgTable("accounts", {
+export const accounts = pgTable(
+  "accounts",
+  {
   id: uuid("id").defaultRandom().primaryKey(),
+  ownerId: text("owner_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
   name: text("name").notNull(), // user-facing label, e.g. "Meezan PKR", "Payoneer USD"
   type: accountTypeEnum("type").notNull(),
   currency: text("currency").notNull(), // ISO 4217 (PKR, USD) or "USDT"/"USDC" for stablecoins
@@ -88,14 +96,21 @@ export const accounts = pgTable("accounts", {
   archived: timestamp("archived", { withTimezone: true }), // soft-delete marker
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+  },
+  (t) => [index("accounts_owner_idx").on(t.ownerId)],
+);
 
 // ── uploads ──────────────────────────────────────────────────────────────────
 // Raw screenshot/receipt the user uploaded, kept so extraction can be re-run if
 // the vision model improves. blobKey points into SeaweedFS (S3-compatible).
 
-export const uploads = pgTable("uploads", {
+export const uploads = pgTable(
+  "uploads",
+  {
   id: uuid("id").defaultRandom().primaryKey(),
+  ownerId: text("owner_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
   blobKey: text("blob_key").notNull(), // S3 key in the screenshots bucket
   contentType: text("content_type"), // image/png, image/jpeg, application/pdf
   byteSize: integer("byte_size"),
@@ -108,7 +123,9 @@ export const uploads = pgTable("uploads", {
   error: text("error"),
   uploadedAt: timestamp("uploaded_at", { withTimezone: true }).notNull().defaultNow(),
   processedAt: timestamp("processed_at", { withTimezone: true }),
-});
+  },
+  (t) => [index("uploads_owner_idx").on(t.ownerId)],
+);
 
 // ── transactions ─────────────────────────────────────────────────────────────
 // Layer 4 (Cashflow Intelligence) input. Dedup key = (accountId, externalId):
@@ -119,6 +136,9 @@ export const transactions = pgTable(
   "transactions",
   {
     id: uuid("id").defaultRandom().primaryKey(),
+    ownerId: text("owner_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
     accountId: uuid("account_id")
       .notNull()
       .references(() => accounts.id, { onDelete: "restrict" }),
@@ -140,12 +160,13 @@ export const transactions = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    // dedup: at most one transaction per (account, externalId) when externalId is present
+    // dedup: at most one transaction per (account, externalId) when externalId is
+    // present. accountId is already owner-scoped (an account belongs to one owner).
     uniqueIndex("transactions_account_external_id_uq")
       .on(t.accountId, t.externalId)
       .where(sql`${t.externalId} is not null`),
     index("transactions_account_occurred_idx").on(t.accountId, t.occurredAt),
-    index("transactions_occurred_idx").on(t.occurredAt),
+    index("transactions_owner_occurred_idx").on(t.ownerId, t.occurredAt),
   ],
 );
 
@@ -169,13 +190,15 @@ export const fxRates = pgTable(
 );
 
 // ── profile ──────────────────────────────────────────────────────────────────
-// Single row (id is fixed = 'me'). Holds the user's geography, display-currency
-// preference, a seed capability graph (Layer 2 — expanded later), psychology notes
-// (Layer 5 — empty in v1, will be inferred from transaction series + confirmed),
-// and preferences.
+// One row per user (PK = owner_id → user.id). Holds the user's geography,
+// display-currency preference, a seed capability graph (Layer 2 — expanded later),
+// psychology notes (Layer 5 — empty in v1, will be inferred from transaction series
+// + confirmed), and preferences.
 
 export const profile = pgTable("profile", {
-  id: text("id").primaryKey().default("me"),
+  ownerId: text("owner_id")
+    .primaryKey()
+    .references(() => user.id, { onDelete: "cascade" }),
   geography: text("geography"), // free text for now, e.g. "Pakistan"
   displayCurrencyPref: text("display_currency_pref").notNull().default("USD"), // "USD" | "PKR"
   homeCurrency: text("home_currency").notNull().default("PKR"), // the user's primary local currency
@@ -217,6 +240,9 @@ export const recommendations = pgTable(
   "recommendations",
   {
     id: uuid("id").defaultRandom().primaryKey(),
+    ownerId: text("owner_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
     title: text("title").notNull(),
     body: text("body").notNull(), // the suggestion itself
     reasoning: text("reasoning").notNull(), // the chain of thought, shown to the user
@@ -227,13 +253,17 @@ export const recommendations = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("recommendations_status_created_idx").on(t.status, t.createdAt)],
+  (t) => [
+    index("recommendations_status_created_idx").on(t.status, t.createdAt),
+    index("recommendations_owner_created_idx").on(t.ownerId, t.createdAt),
+  ],
 );
 
 // ── auth (Better Auth, drizzleAdapter) ───────────────────────────────────────
 // Standard Better Auth tables — column names/types match Better Auth's defaults
-// exactly (this is essentially what `@better-auth/cli generate` emits). Single-user
-// app: exactly one `user` row. Kept here so everything migrates together.
+// exactly (this is essentially what `@better-auth/cli generate` emits). Multi-user:
+// every per-user data table above references `user.id` via `owner_id`. Kept here so
+// everything migrates together.
 // NOTE: `emailVerified` is a BOOLEAN (Better Auth's schema), not a timestamp;
 // `timestamp` columns use Drizzle's default `mode: "date"` (Date in/out), which is
 // what the Better Auth Drizzle adapter expects.

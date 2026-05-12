@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { listAccounts } from "@/src/db/accounts";
 import { getProfile } from "@/src/db/profile";
+import { requireUser } from "@/src/lib/session";
 import { AccountsManager, type ClientAccount } from "./_components/accounts-manager";
 
 export const dynamic = "force-dynamic";
@@ -8,7 +9,11 @@ export const dynamic = "force-dynamic";
 // The "financial reality map": the user's banks / fintech apps / exchanges /
 // wallets / cash. Set up once, rarely changed. (Lives under /money.)
 export default async function AccountsPage() {
-  const [rows, profile] = await Promise.all([listAccounts({ includeArchived: true }), getProfile()]);
+  const user = await requireUser();
+  const [rows, profile] = await Promise.all([
+    listAccounts(user.id, { includeArchived: true }),
+    getProfile(user.id),
+  ]);
   const accounts: ClientAccount[] = rows.map((a) => ({
     id: a.id,
     name: a.name,

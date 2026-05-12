@@ -5,15 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1778580060262,
-      "tag": "0000_harsh_argent",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1778589261572,
-      "tag": "0001_first_champions",
+      "when": 1778607021526,
+      "tag": "0000_init_multi_tenant",
       "breakpoints": true
     }
   ]

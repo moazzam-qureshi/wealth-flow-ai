@@ -1,10 +1,11 @@
 /**
- * Weekly grounded leverage suggestions (Layer 8). Assembles a structured snapshot
- * of the user's situation — accounts, deterministic metrics, recent transactions,
- * recent relevant news, profile/capability graph, and prior recommendations + their
- * statuses — and asks the strategist (Qwen text) for 1–3 suggestions. Each MUST
- * carry its reasoning and explicit grounding (which numbers / news it's based on)
- * so the user can judge it. Stored in `recommendations`.
+ * Weekly grounded leverage suggestions (Layer 8). For each user, assembles a
+ * structured snapshot of their situation — accounts, deterministic metrics, recent
+ * transactions, recent relevant news, profile/capability graph, and prior
+ * recommendations + their statuses — and asks the strategist (Qwen text) for 1–3
+ * suggestions. Each MUST carry its reasoning and explicit grounding (which numbers /
+ * news it's based on) so the user can judge it. Stored in `recommendations` with
+ * the user's owner_id.
  *
  * Framing throughout: financial-leverage IDEAS grounded in real data — NOT advice.
  *
@@ -14,9 +15,9 @@
  */
 import { generateObject } from "ai";
 import { z } from "zod";
-import { desc } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { db } from "../db";
-import { recommendations, transactions, newsItems } from "../db/schema";
+import { recommendations, transactions, newsItems, user as userTable } from "../db/schema";
 import { listAccounts } from "../db/accounts";
 import { getProfileNormalized } from "../db/profile";
 import { computeMetrics } from "../db/cashflow";
@@ -46,7 +47,7 @@ const suggestionSchema = z.object({
   noSuggestionsReason: z.string().nullable().describe("if you genuinely have no good grounded suggestion (e.g. too little data), say why here and return an empty suggestions array — but only as a last resort"),
 });
 
-export type WeeklySuggestionResult = { created: number; reason: string | null };
+export type WeeklySuggestionResult = { users: number; created: number };
 
 const SYSTEM = `
 You are the financial strategist inside WealthFlow. Once a week you look at one
@@ -87,14 +88,15 @@ Hard rules:
 - 1–3 suggestions, ordered by leverage. Concrete titles. No fluff.
 `.trim();
 
-export async function generateWeeklySuggestions(): Promise<WeeklySuggestionResult> {
+/** Generate suggestions for one user. Returns how many recommendations were created. */
+async function generateForUser(ownerId: string): Promise<number> {
   const [accounts, metrics, profile, recentTxns, recentNews, priorRecs] = await Promise.all([
-    listAccounts(),
-    computeMetrics(),
-    getProfileNormalized(),
-    db.select().from(transactions).orderBy(desc(transactions.occurredAt)).limit(40),
+    listAccounts(ownerId),
+    computeMetrics(ownerId),
+    getProfileNormalized(ownerId),
+    db.select().from(transactions).where(eq(transactions.ownerId, ownerId)).orderBy(desc(transactions.occurredAt)).limit(40),
     db.select().from(newsItems).orderBy(desc(newsItems.publishedAt)).limit(25),
-    db.select().from(recommendations).orderBy(desc(recommendations.createdAt)).limit(15),
+    db.select().from(recommendations).where(eq(recommendations.ownerId, ownerId)).orderBy(desc(recommendations.createdAt)).limit(15),
   ]);
 
   const snapshot = {
@@ -113,6 +115,9 @@ export async function generateWeeklySuggestions(): Promise<WeeklySuggestionResul
     priorRecommendations: priorRecs.map((r) => ({ id: r.id, title: r.title, status: r.status, createdAt: r.createdAt.toISOString() })),
   };
 
+  // Skip users who've done nothing yet — no accounts means nothing to ground a suggestion on.
+  if (accounts.length === 0) return 0;
+
   const { object } = await generateObject({
     model: textModel(),
     schema: suggestionSchema,
@@ -123,6 +128,7 @@ export async function generateWeeklySuggestions(): Promise<WeeklySuggestionResul
   let created = 0;
   for (const s of object.suggestions) {
     await db.insert(recommendations).values({
+      ownerId,
       title: s.title.slice(0, 200),
       body: s.body,
       reasoning: s.reasoning,
@@ -131,5 +137,21 @@ export async function generateWeeklySuggestions(): Promise<WeeklySuggestionResul
     });
     created++;
   }
-  return { created, reason: object.noSuggestionsReason ?? null };
+  return created;
+}
+
+/** Run the weekly suggestion pass for every user. */
+export async function generateWeeklySuggestions(): Promise<WeeklySuggestionResult> {
+  const users = await db.select({ id: userTable.id }).from(userTable);
+  let created = 0;
+  let processed = 0;
+  for (const u of users) {
+    try {
+      created += await generateForUser(u.id);
+      processed++;
+    } catch (err) {
+      console.error(`[weekly-suggestions] failed for user ${u.id}:`, err);
+    }
+  }
+  return { users: processed, created };
 }

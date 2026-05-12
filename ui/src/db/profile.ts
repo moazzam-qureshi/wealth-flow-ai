@@ -1,5 +1,5 @@
 /**
- * The single `profile` row (id = 'me'). Geography, display-currency preference,
+ * Per-user `profile` row (PK = owner_id). Geography, display-currency preference,
  * the **capability graph** (Layer 2 — what the user can REALISTICALLY do
  * financially), psychology notes (Layer 5 — empty in v1), and preferences.
  *
@@ -12,8 +12,6 @@
 import { eq } from "drizzle-orm";
 import { db } from "./index";
 import { profile, type Profile } from "./schema";
-
-export const PROFILE_ID = "me" as const;
 
 // "yes" | "no" | "unknown" — tri-state so we can distinguish "I can't" from "not recorded yet".
 export type Tri = "yes" | "no" | "unknown";
@@ -84,14 +82,13 @@ export const DEFAULT_CAPABILITY_GRAPH: CapabilityGraph = {
 };
 
 const DEFAULTS = {
-  id: PROFILE_ID,
   geography: "",
   displayCurrencyPref: "USD",
   homeCurrency: "PKR",
   capabilityGraphJson: DEFAULT_CAPABILITY_GRAPH as unknown,
   psychologyNotesJson: [] as unknown[],
   preferencesJson: {} as Record<string, unknown>,
-} satisfies Partial<Profile> & { id: string };
+} satisfies Partial<Profile>;
 
 /** Merge a stored (possibly partial / old-shape) capability graph with the defaults. */
 export function normalizeCapabilityGraph(raw: unknown): CapabilityGraph {
@@ -111,31 +108,32 @@ export function normalizeCapabilityGraph(raw: unknown): CapabilityGraph {
   };
 }
 
-export async function getProfile(): Promise<Profile> {
-  const rows = await db.select().from(profile).where(eq(profile.id, PROFILE_ID)).limit(1);
+/** Get (creating on first access) the profile row for a user. */
+export async function getProfile(ownerId: string): Promise<Profile> {
+  const rows = await db.select().from(profile).where(eq(profile.ownerId, ownerId)).limit(1);
   if (rows[0]) return rows[0];
-  const inserted = await db.insert(profile).values(DEFAULTS).onConflictDoNothing().returning();
+  const inserted = await db.insert(profile).values({ ownerId, ...DEFAULTS }).onConflictDoNothing().returning();
   if (inserted[0]) return inserted[0];
-  const again = await db.select().from(profile).where(eq(profile.id, PROFILE_ID)).limit(1);
+  const again = await db.select().from(profile).where(eq(profile.ownerId, ownerId)).limit(1);
   return again[0]!;
 }
 
 /** Profile with the capability graph normalized to the current shape. */
-export async function getProfileNormalized() {
-  const p = await getProfile();
+export async function getProfileNormalized(ownerId: string) {
+  const p = await getProfile(ownerId);
   return { ...p, capabilityGraph: normalizeCapabilityGraph(p.capabilityGraphJson) };
 }
 
-export async function updateProfile(patch: Partial<Profile>): Promise<Profile> {
-  await getProfile();
+export async function updateProfile(ownerId: string, patch: Partial<Omit<Profile, "ownerId">>): Promise<Profile> {
+  await getProfile(ownerId); // ensure the row exists
   const updated = await db
     .update(profile)
     .set({ ...patch, updatedAt: new Date() })
-    .where(eq(profile.id, PROFILE_ID))
+    .where(eq(profile.ownerId, ownerId))
     .returning();
   return updated[0]!;
 }
 
-export async function updateCapabilityGraph(graph: CapabilityGraph): Promise<Profile> {
-  return updateProfile({ capabilityGraphJson: normalizeCapabilityGraph(graph) as unknown });
+export async function updateCapabilityGraph(ownerId: string, graph: CapabilityGraph): Promise<Profile> {
+  return updateProfile(ownerId, { capabilityGraphJson: normalizeCapabilityGraph(graph) as unknown });
 }

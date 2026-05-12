@@ -5,9 +5,9 @@ import { computeMetrics } from "@/src/db/cashflow";
 // USD↔home spread, currency exposure %, burn/runway/savings velocity. No LLM.
 // Also used by Mastra's get-metrics tool (Step 4).
 export const GET = handler(async (req: Request) => {
-  await requireApiUser();
+  const user = await requireApiUser();
   const url = new URL(req.url);
   const windowDays = Number(url.searchParams.get("windowDays")) || 90;
-  const metrics = await computeMetrics({ windowDays });
+  const metrics = await computeMetrics(user.id, { windowDays });
   return json(metrics);
 });

@@ -32,8 +32,8 @@ const patchSchema = z.object({
 });
 
 export const GET = handler(async () => {
-  await requireApiUser();
-  const p = await getProfileNormalized();
+  const user = await requireApiUser();
+  const p = await getProfileNormalized(user.id);
   return json({
     geography: p.geography,
     displayCurrencyPref: p.displayCurrencyPref,
@@ -44,7 +44,7 @@ export const GET = handler(async () => {
 });
 
 export const PATCH = handler(async (req: Request) => {
-  await requireApiUser();
+  const user = await requireApiUser();
   const parsed = patchSchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) throw new ApiError(400, parsed.error.issues[0]?.message ?? "Invalid body");
   const { capabilityGraph, ...rest } = parsed.data;
@@ -54,12 +54,12 @@ export const PATCH = handler(async (req: Request) => {
     if (rest.geography !== undefined) cleaned.geography = rest.geography.trim();
     if (rest.displayCurrencyPref !== undefined) cleaned.displayCurrencyPref = rest.displayCurrencyPref.trim().toUpperCase();
     if (rest.homeCurrency !== undefined) cleaned.homeCurrency = rest.homeCurrency.trim().toUpperCase();
-    await updateProfile(cleaned);
+    await updateProfile(user.id, cleaned);
   }
   if (capabilityGraph) {
-    await updateCapabilityGraph(normalizeCapabilityGraph(capabilityGraph) as CapabilityGraph);
+    await updateCapabilityGraph(user.id, normalizeCapabilityGraph(capabilityGraph) as CapabilityGraph);
   }
-  const p = await getProfileNormalized();
+  const p = await getProfileNormalized(user.id);
   return json({
     geography: p.geography,
     displayCurrencyPref: p.displayCurrencyPref,

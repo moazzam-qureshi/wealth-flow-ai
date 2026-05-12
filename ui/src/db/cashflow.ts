@@ -17,6 +17,8 @@ import { accounts, fxRates, transactions } from "./schema";
 import { getProfile } from "./profile";
 import { isUsdEquivalent, usdRateMap } from "./fx";
 
+// Everything here is owner-scoped: callers pass the authenticated user's id.
+
 export type CurrencyBreakdown = {
   currency: string;
   /** sum of balances of accounts in this currency (native units) */
@@ -75,12 +77,12 @@ export type Metrics = {
 
 const DAYS = 1000 * 60 * 60 * 24;
 
-/** Sum active-account balances grouped by currency. */
-async function balancesByCurrency(): Promise<Map<string, number>> {
+/** Sum the owner's active-account balances grouped by currency. */
+async function balancesByCurrency(ownerId: string): Promise<Map<string, number>> {
   const rows = await db
     .select({ currency: accounts.currency, balance: accounts.currentBalance })
     .from(accounts)
-    .where(isNull(accounts.archived));
+    .where(and(eq(accounts.ownerId, ownerId), isNull(accounts.archived)));
   const m = new Map<string, number>();
   for (const r of rows) {
     m.set(r.currency, (m.get(r.currency) ?? 0) + Number(r.balance));
@@ -111,8 +113,8 @@ function convertMap(byCcy: Map<string, number>, usdPer: Map<string, number>) {
   return { total: anyConverted || byCcy.size === 0 ? total : null, unconvertible, breakdown };
 }
 
-/** Confirmed transactions in the last `windowDays`, in USD, split by type. */
-async function cashflowWindow(windowDays: number, usdPer: Map<string, number>): Promise<Cashflow> {
+/** Owner's confirmed transactions in the last `windowDays`, in USD, split by type. */
+async function cashflowWindow(ownerId: string, windowDays: number, usdPer: Map<string, number>): Promise<Cashflow> {
   const since = new Date(Date.now() - windowDays * DAYS);
   const rows = await db
     .select({
@@ -122,7 +124,13 @@ async function cashflowWindow(windowDays: number, usdPer: Map<string, number>): 
       txnType: transactions.txnType,
     })
     .from(transactions)
-    .where(and(eq(transactions.status, "confirmed"), gte(transactions.occurredAt, since)));
+    .where(
+      and(
+        eq(transactions.ownerId, ownerId),
+        eq(transactions.status, "confirmed"),
+        gte(transactions.occurredAt, since),
+      ),
+    );
 
   let incomeUsd = 0;
   let expenseUsd = 0;
@@ -158,17 +166,17 @@ async function cashflowWindow(windowDays: number, usdPer: Map<string, number>): 
   };
 }
 
-export async function computeMetrics(opts?: { windowDays?: number }): Promise<Metrics> {
+export async function computeMetrics(ownerId: string, opts?: { windowDays?: number }): Promise<Metrics> {
   const windowDays = opts?.windowDays ?? 90;
   const [profile, byCcy, usdInter, usdOpenRaw, latestInter, latestOpen, acctCount] =
     await Promise.all([
-      getProfile(),
-      balancesByCurrency(),
+      getProfile(ownerId),
+      balancesByCurrency(ownerId),
       usdRateMap("interbank"),
       usdRateMap("open_market"),
       latestRateAsOf("interbank"),
       latestRateAsOf("open_market"),
-      countActiveAccounts(),
+      countActiveAccounts(ownerId),
     ]);
 
   // Open-market rates with interbank fallback per-currency: prefer the grey rate
@@ -217,7 +225,7 @@ export async function computeMetrics(opts?: { windowDays?: number }): Promise<Me
         }
       : { usdPct: null, homePct: null, otherPct: null };
 
-  const cashflow = await cashflowWindow(windowDays, usdOpenEffective);
+  const cashflow = await cashflowWindow(ownerId, windowDays, usdOpenEffective);
   // runway uses net worth as the "liquid" pool (v1 — everything is liquid)
   const liquidUsd = usdOpenMarket ?? usdInterbank;
   cashflow.runwayMonths =
@@ -254,7 +262,10 @@ async function latestRateAsOf(rateType: "interbank" | "open_market"): Promise<st
   return rows[0]?.fetchedAt ? rows[0].fetchedAt.toISOString() : null;
 }
 
-async function countActiveAccounts(): Promise<number> {
-  const rows = await db.select({ id: accounts.id }).from(accounts).where(isNull(accounts.archived));
+async function countActiveAccounts(ownerId: string): Promise<number> {
+  const rows = await db
+    .select({ id: accounts.id })
+    .from(accounts)
+    .where(and(eq(accounts.ownerId, ownerId), isNull(accounts.archived)));
   return rows.length;
 }

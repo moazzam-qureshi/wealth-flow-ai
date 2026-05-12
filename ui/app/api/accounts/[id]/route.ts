@@ -22,28 +22,28 @@ const patchSchema = z.object({
 });
 
 export const PATCH = handler(async (req: Request, ctx: RouteContext<"/api/accounts/[id]">) => {
-  await requireApiUser();
+  const user = await requireApiUser();
   const { id } = await ctx.params;
-  if (!(await getAccount(id))) throw new ApiError(404, "Account not found");
+  if (!(await getAccount(user.id, id))) throw new ApiError(404, "Account not found");
 
   const parsed = patchSchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) throw new ApiError(400, parsed.error.issues[0]?.message ?? "Invalid body");
   const { archived, ...patch } = parsed.data;
 
-  if (archived === true) await archiveAccount(id);
-  if (archived === false) await unarchiveAccount(id);
+  if (archived === true) await archiveAccount(user.id, id);
+  if (archived === false) await unarchiveAccount(user.id, id);
 
   if (Object.keys(patch).length > 0) {
-    await updateAccount(id, patch as Parameters<typeof updateAccount>[1]);
+    await updateAccount(user.id, id, patch as Parameters<typeof updateAccount>[2]);
   }
-  const account = await getAccount(id);
+  const account = await getAccount(user.id, id);
   return json({ account });
 });
 
 export const DELETE = handler(async (_req: Request, ctx: RouteContext<"/api/accounts/[id]">) => {
-  await requireApiUser();
+  const user = await requireApiUser();
   const { id } = await ctx.params;
-  if (!(await getAccount(id))) throw new ApiError(404, "Account not found");
-  await archiveAccount(id); // soft delete — keeps historical transactions valid
+  if (!(await getAccount(user.id, id))) throw new ApiError(404, "Account not found");
+  await archiveAccount(user.id, id); // soft delete — keeps historical transactions valid
   return json({ ok: true });
 });

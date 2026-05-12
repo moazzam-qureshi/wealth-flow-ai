@@ -1,22 +1,30 @@
 /**
  * The "ask me anything about my finances" agent — a secondary surface (the app is
- * dashboard-first). It answers grounded in the user's real data via the read tools,
- * always shows its reasoning, and never presents output as financial advice.
+ * dashboard-first). It answers grounded in the *signed-in user's* real data via the
+ * read tools, always shows its reasoning, and never presents output as financial
+ * advice.
  *
+ * Multi-tenant: built per request via `createChatAgent(ownerId)` — the read tools
+ * are closed over that user's id, and the agent is invoked with
+ * `memory: { resource: ownerId, thread: ... }` so conversation memory is per-user.
  * Created via a factory (not at module load) so the OpenRouter key isn't needed at
- * build time — see src/mastra/index.ts.
+ * build time.
  */
 import { Agent } from "@mastra/core/agent";
+import { Memory } from "@mastra/memory";
+import { PostgresStore } from "@mastra/pg";
 import { textModel } from "../llm";
-import { readTools } from "../tools/read-tools";
+import { makeReadTools } from "../tools/read-tools";
+import { env } from "../../lib/env";
 
 export const CHAT_AGENT_ID = "chat-agent";
 
 const INSTRUCTIONS = `
 You are the financial-strategist assistant inside WealthFlow — a tool that maps a
-single user's *actual* financial reality (their geography, banking/fintech access,
+user's *actual* financial reality (their geography, banking/fintech access,
 multi-currency holdings, cashflow, opportunities, risks, behavior) and helps them
-think about how to evolve financially.
+think about how to evolve financially. You are talking to ONE user; all the tools
+return that user's own data.
 
 This user is internet-native and often operates in a hybrid / emerging-market
 financial reality (e.g. a freelancer holding both a local currency under high
@@ -56,12 +64,28 @@ How to behave:
   rather than guessing.
 `.trim();
 
-export function createChatAgent() {
+// One Memory instance, shared across users; per-user isolation comes from passing
+// `memory: { resource: ownerId, thread }` at stream time. Stored in the app's
+// Postgres (Mastra creates its own mastra_* tables at runtime).
+let _memory: Memory | null = null;
+function getChatMemory(): Memory {
+  if (!_memory) {
+    _memory = new Memory({
+      storage: new PostgresStore({ id: "wealthflow-chat-memory", connectionString: env.DATABASE_URL }),
+      options: { lastMessages: 12 },
+    });
+  }
+  return _memory;
+}
+
+/** Build a chat agent scoped to one user. Tools are closed over `ownerId`. */
+export function createChatAgent(ownerId: string) {
   return new Agent({
     id: CHAT_AGENT_ID,
     name: "WealthFlow Assistant",
     instructions: INSTRUCTIONS,
     model: textModel(),
-    tools: readTools,
+    tools: makeReadTools(ownerId),
+    memory: getChatMemory(),
   });
 }

@@ -1,6 +1,8 @@
 /**
  * Transaction DB helpers: dedup checks, saving a confirmed transaction (with the
- * account-balance side-effect), and self-transfer linking.
+ * account-balance side-effect), and self-transfer linking. Owner-scoped — callers
+ * pass the authenticated user's id; an account hint that isn't owned by that user
+ * is treated as not-found.
  *
  * Dedup key = (accountId, externalId). When externalId is null we can't dedup, so
  * the UI nudges the user to supply it before saving.
@@ -16,15 +18,26 @@ export type Direction = "in" | "out";
 
 export const TXN_TYPES: TxnType[] = ["income", "expense", "transfer", "investment"];
 
-/** Does a confirmed/needs-review txn already exist for this (account, externalId)? */
+/**
+ * Does a confirmed/needs-review txn already exist for this (account, externalId)?
+ * accountId is already owner-scoped (an account belongs to one owner), but we pass
+ * ownerId for an extra belt-and-braces filter.
+ */
 export async function findByExternalId(
+  ownerId: string,
   accountId: string,
   externalId: string,
 ): Promise<Transaction | undefined> {
   const rows = await db
     .select()
     .from(transactions)
-    .where(and(eq(transactions.accountId, accountId), eq(transactions.externalId, externalId)))
+    .where(
+      and(
+        eq(transactions.ownerId, ownerId),
+        eq(transactions.accountId, accountId),
+        eq(transactions.externalId, externalId),
+      ),
+    )
     .limit(1);
   return rows[0];
 }
@@ -49,10 +62,18 @@ export type SaveTxnInput = {
  * Save a confirmed transaction and update the account balance accordingly.
  * - direction "in"  → balance += amount
  * - direction "out" → balance -= amount
- * Throws on duplicate (account, externalId). Runs in a transaction.
+ * Throws ACCOUNT_NOT_FOUND if the account doesn't belong to `ownerId`, and
+ * DUPLICATE_TRANSACTION on a duplicate (account, externalId). Runs in a transaction.
  */
-export async function saveConfirmedTransaction(input: SaveTxnInput): Promise<Transaction> {
+export async function saveConfirmedTransaction(ownerId: string, input: SaveTxnInput): Promise<Transaction> {
   return db.transaction(async (tx) => {
+    const acct = await tx
+      .select()
+      .from(accounts)
+      .where(and(eq(accounts.id, input.accountId), eq(accounts.ownerId, ownerId)))
+      .limit(1);
+    if (!acct[0]) throw new Error("ACCOUNT_NOT_FOUND");
+
     if (input.externalId) {
       const dup = await tx
         .select({ id: transactions.id })
@@ -66,12 +87,10 @@ export async function saveConfirmedTransaction(input: SaveTxnInput): Promise<Tra
       }
     }
 
-    const acct = await tx.select().from(accounts).where(eq(accounts.id, input.accountId)).limit(1);
-    if (!acct[0]) throw new Error("ACCOUNT_NOT_FOUND");
-
     const inserted = await tx
       .insert(transactions)
       .values({
+        ownerId,
         accountId: input.accountId,
         uploadId: input.uploadId ?? null,
         externalId: input.externalId ?? null,
@@ -103,36 +122,50 @@ export async function saveConfirmedTransaction(input: SaveTxnInput): Promise<Tra
   });
 }
 
-/** Link two existing transactions as the two halves of a self-transfer. */
-export async function linkAsTransfer(txnIdA: string, txnIdB: string): Promise<void> {
+/** Link two of the user's own transactions as the two halves of a self-transfer. */
+export async function linkAsTransfer(ownerId: string, txnIdA: string, txnIdB: string): Promise<void> {
   await db.transaction(async (tx) => {
     await tx
       .update(transactions)
       .set({ transferLinkId: txnIdB, txnType: "transfer", updatedAt: new Date() })
-      .where(eq(transactions.id, txnIdA));
+      .where(and(eq(transactions.id, txnIdA), eq(transactions.ownerId, ownerId)));
     await tx
       .update(transactions)
       .set({ transferLinkId: txnIdA, txnType: "transfer", updatedAt: new Date() })
-      .where(eq(transactions.id, txnIdB));
+      .where(and(eq(transactions.id, txnIdB), eq(transactions.ownerId, ownerId)));
   });
 }
 
-export async function unlinkTransfer(txnId: string): Promise<void> {
-  const row = (await db.select().from(transactions).where(eq(transactions.id, txnId)).limit(1))[0];
+export async function unlinkTransfer(ownerId: string, txnId: string): Promise<void> {
+  const row = (
+    await db
+      .select()
+      .from(transactions)
+      .where(and(eq(transactions.id, txnId), eq(transactions.ownerId, ownerId)))
+      .limit(1)
+  )[0];
   if (!row?.transferLinkId) return;
   const otherId = row.transferLinkId;
   await db.transaction(async (tx) => {
-    await tx.update(transactions).set({ transferLinkId: null, updatedAt: new Date() }).where(eq(transactions.id, txnId));
-    await tx.update(transactions).set({ transferLinkId: null, updatedAt: new Date() }).where(eq(transactions.id, otherId));
+    await tx
+      .update(transactions)
+      .set({ transferLinkId: null, updatedAt: new Date() })
+      .where(and(eq(transactions.id, txnId), eq(transactions.ownerId, ownerId)));
+    await tx
+      .update(transactions)
+      .set({ transferLinkId: null, updatedAt: new Date() })
+      .where(and(eq(transactions.id, otherId), eq(transactions.ownerId, ownerId)));
   });
 }
 
 /**
- * Heuristic: find recently-saved transactions that look like the *other half* of a
- * just-saved transfer — opposite direction, in a different account, near in time,
- * and a roughly matching USD value. Returns candidates (UI asks the user to confirm).
+ * Heuristic: find recently-saved transactions (of the same owner) that look like
+ * the *other half* of a just-saved transfer — opposite direction, in a different
+ * account, near in time, and a roughly matching USD value. Returns candidates (UI
+ * asks the user to confirm).
  */
 export async function findTransferCandidates(
+  ownerId: string,
   forTxn: Transaction,
   opts?: { withinHours?: number; usdTolerancePct?: number },
 ): Promise<Transaction[]> {
@@ -147,6 +180,7 @@ export async function findTransferCandidates(
     .from(transactions)
     .where(
       and(
+        eq(transactions.ownerId, ownerId),
         ne(transactions.accountId, forTxn.accountId),
         eq(transactions.direction, oppositeDir),
         eq(transactions.status, "confirmed"),

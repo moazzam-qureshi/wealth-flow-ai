@@ -1,4 +1,5 @@
 import { listRecommendations } from "@/src/db/recommendations";
+import { requireUser } from "@/src/lib/session";
 import { SuggestionsList, type ClientRec } from "./_components/suggestions-list";
 
 export const dynamic = "force-dynamic";
@@ -6,7 +7,8 @@ export const dynamic = "force-dynamic";
 // "Ideas" (Layer 8): 1–3 grounded financial-leverage ideas each week, each showing
 // its reasoning and exactly which numbers / news it's based on. Not advice.
 export default async function IdeasScreen() {
-  const recs = await listRecommendations();
+  const user = await requireUser();
+  const recs = await listRecommendations(user.id);
   const clientRecs: ClientRec[] = recs.map((r) => ({
     id: r.id,
     title: r.title,
