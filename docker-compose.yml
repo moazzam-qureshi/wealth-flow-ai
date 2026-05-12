@@ -13,6 +13,10 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     env_file: .env
+    # Web-facing service. No published `ports:` — Coolify/Traefik route to :3000
+    # (it's the EXPOSE in ui/Dockerfile). Local port publishing is in docker-compose.local.yml.
+    expose:
+      - "3000"
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-wealthflow}:${POSTGRES_PASSWORD:-wealthflow}@postgres:5432/${POSTGRES_DB:-wealthflow}
       SEAWEEDFS_S3_ENDPOINT: http://seaweedfs:8333
@@ -24,7 +28,13 @@ services:
       postgres:
         condition: service_healthy
       seaweedfs:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3000/login',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))\""]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
 
   postgres:
     image: postgres:17-alpine
@@ -45,14 +55,19 @@ services:
     image: chrislusf/seaweedfs:latest
     restart: unless-stopped
     # Single-binary mode: master + volume + filer + S3 gateway on :8333.
-    command:
-      - server
-      - -dir=/data
-      - -s3
-      - -s3.config=/etc/seaweedfs/s3.json
+    # No -s3.config: the S3 gateway runs with anonymous access (any access/secret
+    # key works). It's only reachable on the internal compose network, never
+    # published, so that's fine — and it avoids bind-mounting a config file, which
+    # is unreliable under Coolify (relative single-file mounts get auto-created as
+    # an empty directory -> "is a directory" crash).
+    command: server -s3 -s3.port=8333 -dir=/data
     volumes:
       - seaweeddata:/data
-      - ./seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9333/cluster/status || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   pgdata:

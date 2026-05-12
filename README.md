@@ -27,13 +27,16 @@ docker compose up -d --build  # app + postgres + seaweedfs
 # The app container runs migrations on start. It listens on :3000 (Coolify/Traefik exposes it).
 ```
 
-To reach it locally, temporarily uncomment the `ports:` line under the `app` service in
-`docker-compose.yml`, or `docker compose exec app …`.
+To reach it locally, add the override file (it publishes the ports):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
+```
 
 ### App on the host, Postgres in Docker (fast dev loop)
 
 ```bash
-docker compose up -d postgres seaweedfs   # postgres 5432 is published to 127.0.0.1
+docker compose -f docker-compose.yml -f docker-compose.local.yml up -d postgres seaweedfs   # postgres 5432 → 127.0.0.1
 cd ui
 cp .env.local.example .env.local          # edit as needed
 npm install
@@ -47,14 +50,16 @@ npm run dev                               # http://localhost:3000
    `docker-compose.yml` (3 services: `app`, `postgres`, `seaweedfs`).
 2. **Env vars** (Coolify "Environment Variables"): set everything from `.env.example`
    — at minimum `BETTER_AUTH_SECRET` (`openssl rand -base64 32`), `BETTER_AUTH_URL`
-   + `APP_BASE_URL` (your https domain), `OPENROUTER_API_KEY`, `CRON_SECRET` (random),
-   and **change** the SeaweedFS keys (and `seaweedfs/s3.json` to match). `DATABASE_URL`
-   and `SEAWEEDFS_S3_ENDPOINT` are wired by the compose file to the internal service
-   names — leave those alone unless you use a Coolify-managed Postgres instead.
+   + `APP_BASE_URL` (your https domain), `OPENROUTER_API_KEY`, `CRON_SECRET` (random).
+   `DATABASE_URL` and `SEAWEEDFS_S3_ENDPOINT` are wired by the compose file to the
+   internal service names — leave those alone unless you use a Coolify-managed
+   Postgres instead. `SEAWEEDFS_S3_ACCESS_KEY` / `SEAWEEDFS_S3_SECRET_KEY` can be
+   anything (the S3 gateway runs without auth and is never internet-facing).
 3. **Domain + TLS**: assign a domain to the **`app`** service in Coolify — it adds the
    Traefik labels and provisions Let's Encrypt automatically. `postgres` and
-   `seaweedfs` get no domain → not reachable from the internet. (Don't expose the
-   `app` `ports:` line in compose — Coolify/Traefik handle ingress.)
+   `seaweedfs` get no domain → not reachable from the internet. The committed
+   `docker-compose.yml` publishes no host ports — Coolify/Traefik handle ingress
+   (port publishing for local runs lives in `docker-compose.local.yml`).
 4. **Migrations** run on container start (the entrypoint runs `scripts/migrate.mjs`
    before `next start`). Mastra creates its own `mastra_*` tables at runtime.
 5. **Scheduled tasks** (Coolify "Scheduled Tasks" on the `app` service, or system
@@ -89,8 +94,8 @@ wealth-flow-ai/
                        #   ingest, fx-fetch, news-fetch, suggestions, rss-feeds
     scripts/           # migrate.mjs, docker-entrypoint.sh
     Dockerfile
-  docker-compose.yml   # app + postgres + seaweedfs (flat, Coolify-friendly)
-  seaweedfs/s3.json    # static S3 credentials for SeaweedFS (match SEAWEEDFS_S3_* env)
+  docker-compose.yml       # app + postgres + seaweedfs (flat, Coolify-friendly, no published ports)
+  docker-compose.local.yml # local-only override: publishes app :3000 and postgres :5432
   .env.example
   docs/                # product.md, the plan
 ```
