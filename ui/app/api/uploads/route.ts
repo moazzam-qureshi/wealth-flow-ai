@@ -33,18 +33,33 @@ export const POST = handler(async (req: Request) => {
   const ext = EXT_BY_MIME[mime] ?? "bin";
   const bytes = new Uint8Array(await file.arrayBuffer());
   const key = makeBlobKey(ext);
-  await putBlob(key, bytes, mime);
 
-  const hintedAccountId = (form.get("accountId") as string | null) || null;
-  const [uploadRow] = await db
-    .insert(uploads)
-    .values({ ownerId: user.id, blobKey: key, contentType: mime, byteSize: file.size, status: "pending" })
-    .returning();
-
+  // Store the blob.
   try {
-    const payload = await processUpload(user.id, uploadRow, hintedAccountId);
+    await putBlob(key, bytes, mime);
+  } catch (err) {
+    console.error("[uploads] putBlob failed:", err);
+    throw new ApiError(502, `Blob storage failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  // Record the upload.
+  let uploadRow;
+  try {
+    [uploadRow] = await db
+      .insert(uploads)
+      .values({ ownerId: user.id, blobKey: key, contentType: mime, byteSize: file.size, status: "pending" })
+      .returning();
+  } catch (err) {
+    console.error("[uploads] insert failed:", err);
+    throw new ApiError(500, `Could not record upload: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  // Run vision extraction.
+  try {
+    const payload = await processUpload(user.id, uploadRow, (form.get("accountId") as string | null) || null);
     return json(payload);
   } catch (err) {
+    console.error("[uploads] processUpload failed:", err);
     throw new ApiError(422, err instanceof Error ? err.message : "Extraction failed");
   }
 });
