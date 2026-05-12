@@ -53,10 +53,10 @@ npm run dev                               # http://localhost:3000
    + `APP_BASE_URL` (your https domain), `OPENROUTER_API_KEY`, `CRON_SECRET` (random).
    `DATABASE_URL` and `SEAWEEDFS_S3_ENDPOINT` are wired by the compose file to the
    internal service names — leave those alone unless you use a Coolify-managed
-   Postgres instead. `SEAWEEDFS_S3_ACCESS_KEY` / `SEAWEEDFS_S3_SECRET_KEY` must
-   match an identity in `seaweedfs/s3.json` (the `wealthflow` one by default — the
-   compose file ships the config to the container as a Docker config); change both
-   together for a real deployment. seaweedfs is never internet-facing.
+   Postgres instead. `SEAWEEDFS_S3_ACCESS_KEY` / `SEAWEEDFS_S3_SECRET_KEY` default
+   to `wealthflow` / `wealthflowsecret`; the seaweedfs service generates its S3
+   identity config from these at startup, so if you change them in Coolify the
+   storage picks them up automatically. seaweedfs is never internet-facing.
 3. **Domain + TLS**: assign a domain to the **`app`** service in Coolify — it adds the
    Traefik labels and provisions Let's Encrypt automatically. `postgres` and
    `seaweedfs` get no domain → not reachable from the internet. The committed
@@ -99,7 +99,6 @@ wealth-flow-ai/
     Dockerfile
   docker-compose.yml       # app + postgres + seaweedfs (flat, Coolify-friendly, no published ports)
   docker-compose.local.yml # local-only override: publishes app :3000 and postgres :5432
-  seaweedfs/s3.json        # SeaweedFS S3 identity config (shipped to the container as a Docker config)
   .env.example
   docs/                # product.md, the plan
 ```
