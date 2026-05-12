@@ -2,10 +2,12 @@ import Link from "next/link";
 import { and, desc, eq } from "drizzle-orm";
 import { listAccounts } from "@/src/db/accounts";
 import { computeMetrics } from "@/src/db/cashflow";
+import { ensureFxRates } from "@/src/lib/fx-fetch";
 import { db } from "@/src/db";
 import { recommendations } from "@/src/db/schema";
 import { requireUser } from "@/src/lib/session";
 import { Card, SectionLabel, Stat, RunwayMeter, ExposureBar, CcyAvatar, fmtMoney } from "../_components/ui";
+import { RefreshRatesButton } from "./_components/refresh-rates";
 
 export const dynamic = "force-dynamic";
 
@@ -23,6 +25,10 @@ async function topNewRecommendation(ownerId: string) {
 // spread, runway fuel-gauge, currency-exposure light-strip, cashflow, accounts.
 export default async function MoneyScreen() {
   const user = await requireUser();
+  // Make sure FX rates exist before computing metrics — a fresh deployment would
+  // otherwise show "no FX rate for PKR" and a blank-ish dashboard. Cheap (no-op if
+  // rates are < ~18h old).
+  await ensureFxRates();
   const [accounts, m, topRec] = await Promise.all([
     listAccounts(user.id),
     computeMetrics(user.id),
@@ -65,8 +71,9 @@ export default async function MoneyScreen() {
               </div>
             </div>
             {!haveRates && (
-              <div className="relative mt-4 rounded-xl bg-[rgba(245,185,66,0.1)] px-3 py-2 text-[12px] text-[var(--amber)]">
-                No FX rates stored. Run the rate refresh once (the <code>cron/fx-rates</code> task) to convert everything.
+              <div className="relative mt-4 space-y-2 rounded-xl bg-[rgba(245,185,66,0.1)] px-3 py-2.5 text-[12px] text-[var(--amber)]">
+                <p>No FX rates yet — so PKR (and other non-USD) balances aren&apos;t converted into your net worth, exposure, or runway. Rates auto-fetch on load; if that didn&apos;t work, pull them now:</p>
+                <RefreshRatesButton />
               </div>
             )}
           </Card>
@@ -163,9 +170,10 @@ export default async function MoneyScreen() {
               })}
             </ul>
             {nw.unconvertible.length > 0 && (
-              <p className="mt-2 text-[11px] text-[var(--amber)]">
-                No FX rate yet for {nw.unconvertible.join(", ")} — not counted in the totals.
-              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-[var(--amber)]">
+                <span>No FX rate for {nw.unconvertible.join(", ")} yet — not counted in totals.</span>
+                <RefreshRatesButton label="Get rates" />
+              </div>
             )}
           </div>
         </>

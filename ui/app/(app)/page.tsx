@@ -3,6 +3,7 @@ import { desc, eq } from "drizzle-orm";
 import { db } from "@/src/db";
 import { uploads, transactions } from "@/src/db/schema";
 import { computeMetrics } from "@/src/db/cashflow";
+import { ensureFxRates } from "@/src/lib/fx-fetch";
 import { requireUser } from "@/src/lib/session";
 import { CaptureScreen } from "./_components/capture-screen";
 
@@ -11,6 +12,7 @@ import { CaptureScreen } from "./_components/capture-screen";
 export const dynamic = "force-dynamic";
 
 async function homeData(ownerId: string) {
+  await ensureFxRates(); // keep the net-worth pill on the capture screen meaningful
   const [recentUploads, recentTxns, m] = await Promise.all([
     db
       .select({ id: uploads.id, blobKey: uploads.blobKey, status: uploads.status, uploadedAt: uploads.uploadedAt })

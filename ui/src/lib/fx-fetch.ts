@@ -8,7 +8,10 @@
  *
  * Triggered by POST /api/cron/fx-rates (Coolify scheduled task / manual).
  */
+import { desc } from "drizzle-orm";
 import { env } from "./env";
+import { db } from "../db";
+import { fxRates } from "../db/schema";
 import { insertRate } from "../db/fx";
 
 // Currencies we care to track against USD (others ignored even if the feed has them).
@@ -22,7 +25,7 @@ type FetchResult = {
 
 async function fetchInterbank(): Promise<{ source: string; rates: Record<string, number> }> {
   const url = env.FX_INTERBANK_URL;
-  const res = await fetch(url, { headers: { accept: "application/json" } });
+  const res = await fetch(url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(8000) });
   if (!res.ok) throw new Error(`interbank source ${url} returned ${res.status}`);
   const data = (await res.json()) as {
     base_code?: string;
@@ -40,12 +43,40 @@ async function fetchInterbank(): Promise<{ source: string; rates: Record<string,
 async function fetchOpenMarket(): Promise<{ source: string; rates: Record<string, number> } | null> {
   const url = env.FX_OPENMARKET_URL;
   if (!url) return null;
-  const res = await fetch(url, { headers: { accept: "application/json" } });
+  const res = await fetch(url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(8000) });
   if (!res.ok) throw new Error(`open-market source ${url} returned ${res.status}`);
   const data = (await res.json()) as Record<string, unknown> & { rates?: Record<string, number> };
   // Accept either { PKR: 305.2, ... } or { rates: { PKR: 305.2 } }
   const rates = (data.rates ?? data) as Record<string, number>;
   return { source: new URL(url).host, rates };
+}
+
+/**
+ * Make sure we have *some* FX rates, fetching them on the fly if not. Called from
+ * pages that need conversions (Money dashboard) so a fresh deployment isn't stuck
+ * showing "no FX rate" until someone remembers to run the cron. Cheap: it only
+ * fetches when the newest stored rate is older than `maxAgeHours` (default 18h) or
+ * there are none at all. Failures are swallowed — the dashboard already tolerates
+ * missing rates and shows its own banner.
+ *
+ * Best-effort + non-blocking-ish: it does await the fetch (so a first-ever load
+ * gets rates), but the source (open.er-api.com) is fast. Concurrent calls may both
+ * fetch; that just stores a couple of duplicate rows, which is harmless.
+ */
+export async function ensureFxRates(opts?: { maxAgeHours?: number }): Promise<void> {
+  const maxAgeMs = (opts?.maxAgeHours ?? 18) * 3600_000;
+  try {
+    const latest = await db
+      .select({ fetchedAt: fxRates.fetchedAt })
+      .from(fxRates)
+      .orderBy(desc(fxRates.fetchedAt))
+      .limit(1);
+    const fresh = latest[0]?.fetchedAt && Date.now() - latest[0].fetchedAt.getTime() < maxAgeMs;
+    if (fresh) return;
+    await fetchAndStoreFxRates();
+  } catch (err) {
+    console.error("[fx] ensureFxRates failed (dashboard will show the no-rates banner):", err);
+  }
 }
 
 export async function fetchAndStoreFxRates(): Promise<FetchResult> {
