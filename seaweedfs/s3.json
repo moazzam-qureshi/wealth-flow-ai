@@ -1,0 +1,14 @@
+{
+  "identities": [
+    {
+      "name": "wealthflow",
+      "credentials": [
+        {
+          "accessKey": "wealthflow",
+          "secretKey": "wealthflowsecret"
+        }
+      ],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

@@ -20,6 +20,9 @@ services:
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-wealthflow}:${POSTGRES_PASSWORD:-wealthflow}@postgres:5432/${POSTGRES_DB:-wealthflow}
       SEAWEEDFS_S3_ENDPOINT: http://seaweedfs:8333
+      # Must match an identity in seaweedfs/s3.json (the `wealthflow` identity).
+      SEAWEEDFS_S3_ACCESS_KEY: ${SEAWEEDFS_S3_ACCESS_KEY:-wealthflow}
+      SEAWEEDFS_S3_SECRET_KEY: ${SEAWEEDFS_S3_SECRET_KEY:-wealthflowsecret}
       # Container has IPv4-only egress; DNS returns AAAA records too. Disabling
       # Happy-Eyeballs makes Node connect IPv4-first sequentially instead of racing
       # (and timing out) on the dead IPv6 addresses — fixes ETIMEDOUT to OpenRouter.
@@ -54,20 +57,28 @@ services:
   seaweedfs:
     image: chrislusf/seaweedfs:latest
     restart: unless-stopped
-    # Single-binary mode: master + volume + filer + S3 gateway on :8333.
-    # No -s3.config: the S3 gateway runs with anonymous access (any access/secret
-    # key works). It's only reachable on the internal compose network, never
-    # published, so that's fine — and it avoids bind-mounting a config file, which
-    # is unreliable under Coolify (relative single-file mounts get auto-created as
-    # an empty directory -> "is a directory" crash).
-    command: server -s3 -s3.port=8333 -dir=/data
+    # Single-binary mode: master + volume + filer + S3 gateway on :8333, with an
+    # S3 identity config (this image enforces credentials even with `-s3` alone, so
+    # the app's SEAWEEDFS_S3_ACCESS_KEY/SECRET_KEY must match an identity in s3.json).
+    # The config is delivered as a compose `config` (see the top-level `configs:`
+    # block), NOT a bind mount — under Coolify a relative single-file bind mount
+    # resolves to a missing host path and Docker auto-creates an empty *directory*
+    # there ("is a directory" crash). Configs sidestep that.
+    command: server -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/s3.json -dir=/data
     volumes:
       - seaweeddata:/data
+    configs:
+      - source: seaweedfs_s3
+        target: /etc/seaweedfs/s3.json
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9333/cluster/status || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
+
+configs:
+  seaweedfs_s3:
+    file: ./seaweedfs/s3.json
 
 volumes:
   pgdata:
