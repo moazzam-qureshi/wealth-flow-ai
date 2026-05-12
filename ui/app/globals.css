@@ -1,0 +1,149 @@
+@import "tailwindcss";
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   WealthFlow — "the operator's console"
+   Dark-first, calm, precise. Mint = hard currency / health, cyan = home currency,
+   amber = attention, coral = burn / risk. Big numbers read like instrument readouts.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  /* surfaces */
+  --bg: #0a0b0d;            /* page */
+  --bg-soft: #0e1013;       /* slightly lifted regions */
+  --card: #14171b;          /* card surface */
+  --card-hi: #1a1e23;       /* hovered / elevated card */
+  --line: #23282e;          /* hairline borders */
+  --line-soft: #1b1f24;
+
+  /* text */
+  --fg: #e9edf0;            /* primary */
+  --fg-dim: #aab2bb;        /* secondary */
+  --fg-mut: #6c757e;        /* tertiary / labels */
+  --fg-faint: #454c54;
+
+  /* accents */
+  --mint: #4fe3b0;          /* USD / hard currency / positive / health */
+  --mint-dim: #2ba37e;
+  --mint-glow: rgba(79, 227, 176, 0.16);
+  --cyan: #4cc9f0;          /* home currency */
+  --cyan-dim: #2b8fb0;
+  --amber: #f5b942;         /* attention / affects-you / medium confidence */
+  --amber-dim: #b8862a;
+  --coral: #ff6b6b;         /* burn / risk / low runway / negative */
+  --coral-dim: #c24b4b;
+  --violet: #a78bfa;        /* misc accent (chat) */
+
+  --radius: 1rem;           /* rounded-2xl-ish for cards */
+  --radius-sm: 0.625rem;
+}
+
+@theme inline {
+  --color-background: var(--bg);
+  --color-foreground: var(--fg);
+  --color-card: var(--card);
+  --color-line: var(--line);
+  --color-mint: var(--mint);
+  --color-cyan: var(--cyan);
+  --color-amber: var(--amber);
+  --color-coral: var(--coral);
+  --color-fg-dim: var(--fg-dim);
+  --color-fg-mut: var(--fg-mut);
+
+  --font-display: var(--font-bricolage), var(--font-geist-sans), system-ui, sans-serif;
+  --font-sans: var(--font-geist-sans), system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+* {
+  border-color: var(--line);
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--fg);
+}
+
+body {
+  font-family: var(--font-sans);
+  /* faint grain so the dark surface isn't dead-flat */
+  background-image:
+    radial-gradient(120% 60% at 50% -10%, rgba(79, 227, 176, 0.05), transparent 60%),
+    url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.022'/%3E%3C/svg%3E");
+  background-attachment: fixed;
+}
+
+/* tabular numbers everywhere we show figures */
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* the "instrument readout" look for big money figures */
+.readout {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.font-display { font-family: var(--font-display); }
+
+/* card primitive */
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.card-hi { background: var(--card-hi); }
+
+/* subtle entrance stagger */
+@keyframes wf-rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.wf-rise { animation: wf-rise 0.45s cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+/* scanning shimmer for the receipt-reading state */
+@keyframes wf-scan {
+  0% { transform: translateY(-110%); }
+  100% { transform: translateY(110%); }
+}
+.wf-scan::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, transparent, var(--mint-glow), transparent);
+  animation: wf-scan 1.6s ease-in-out infinite;
+}
+
+/* glow pulse for "live"/processing dots */
+@keyframes wf-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 var(--mint-glow); }
+  50% { opacity: 0.6; box-shadow: 0 0 0 6px transparent; }
+}
+.wf-pulse { animation: wf-pulse 1.8s ease-in-out infinite; }
+
+/* selection */
+::selection { background: var(--mint-glow); color: var(--mint); }
+
+/* slim scrollbars */
+* { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+*::-webkit-scrollbar { width: 6px; height: 6px; }
+*::-webkit-scrollbar-thumb { background: var(--line); border-radius: 999px; }
+
+/* focus ring */
+:where(input, select, textarea, button, a):focus-visible {
+  outline: 2px solid var(--mint-dim);
+  outline-offset: 1px;
+}
+
+/* form controls — dark by default */
+input, select, textarea {
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  color: var(--fg);
+  border-radius: var(--radius-sm);
+}
+input::placeholder, textarea::placeholder { color: var(--fg-faint); }
+select option { background: var(--card); color: var(--fg); }
+
+/* mobile safe-area for the bottom tab bar */
+.pb-safe { padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 4.75rem); }
+.bottom-safe { bottom: env(safe-area-inset-bottom, 0px); }

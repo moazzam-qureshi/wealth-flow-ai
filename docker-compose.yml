@@ -1,0 +1,63 @@
+# WealthFlow AI — single flat compose. Deployed via Coolify on a self-hosted VPS:
+# Coolify/Traefik own ingress + TLS + routing, so there are NO custom networks,
+# NO published ports, and NO reverse-proxy config here. Only `app` is web-facing.
+#
+# Locally: `cp .env.example .env && docker compose up --build`
+#   app  → http://localhost:3000   (uncomment the ports line below for local use)
+
+services:
+  app:
+    build:
+      context: ./ui
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-wealthflow}:${POSTGRES_PASSWORD:-wealthflow}@postgres:5432/${POSTGRES_DB:-wealthflow}
+      SEAWEEDFS_S3_ENDPOINT: http://seaweedfs:8333
+    depends_on:
+      postgres:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_started
+    # Published to localhost for running the full stack locally. Coolify exposes
+    # the service via Traefik instead — this mapping is harmless there (bound to
+    # 127.0.0.1, so not internet-facing even on the VPS).
+    ports:
+      - "127.0.0.1:3000:3000"
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-wealthflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wealthflow}
+      POSTGRES_DB: ${POSTGRES_DB:-wealthflow}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # Published for local dev convenience (so `npm run dev` in ui/ can reach it).
+    # Coolify deploys the app+db inside the same network — this mapping is harmless there.
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-wealthflow} -d ${POSTGRES_DB:-wealthflow}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:latest
+    restart: unless-stopped
+    # Single-binary mode: master + volume + filer + S3 gateway on :8333.
+    command:
+      - server
+      - -dir=/data
+      - -s3
+      - -s3.config=/etc/seaweedfs/s3.json
+    volumes:
+      - seaweeddata:/data
+      - ./seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+
+volumes:
+  pgdata:
+  seaweeddata:

@@ -1,0 +1,48 @@
+{
+  "name": "wealthflow-ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:studio": "drizzle-kit studio"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1045.0",
+    "better-auth": "^1.6.10",
+    "@mastra/ai-sdk": "^1.4.1",
+    "@mastra/core": "^1.32.1",
+    "@mastra/loggers": "^1.1.1",
+    "@mastra/memory": "^1.17.5",
+    "@mastra/pg": "^1.10.0",
+    "@openrouter/ai-sdk-provider": "^2.9.0",
+    "ai": "^6.0.177",
+    "drizzle-orm": "^0.45.2",
+    "next": "16.2.6",
+    "postgres": "^3.4.9",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "rss-parser": "^3.13.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@ai-sdk/react": "^3.0.179",
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "drizzle-kit": "^0.31.10",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.6",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}

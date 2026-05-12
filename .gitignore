@@ -1,0 +1,21 @@
+node_modules/
+.env
+.env.local
+.env.*.local
+dist/
+.next/
+.mastra/
+out/
+build/
+*.log
+npm-debug.log*
+.DS_Store
+coverage/
+*.tsbuildinfo
+.turbo/
+
+# local docker volumes if bind-mounted
+/data/
+
+# Claude Code local config / state — not part of the repo
+.claude/
