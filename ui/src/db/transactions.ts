@@ -10,7 +10,7 @@
 import { and, eq, gte, lte, isNull, ne, desc } from "drizzle-orm";
 import { db } from "./index";
 import { accounts, transactions, type Transaction } from "./schema";
-import { applyDelta } from "./money";
+import { applyDelta, negate } from "./money";
 import { isUsdEquivalent, usdRateMap } from "./fx";
 
 export type TxnType = "income" | "expense" | "transfer" | "investment";
@@ -119,6 +119,72 @@ export async function saveConfirmedTransaction(ownerId: string, input: SaveTxnIn
       .where(eq(accounts.id, input.accountId));
 
     return inserted[0]!;
+  });
+}
+
+/**
+ * The full transaction history for one of the user's accounts (newest first),
+ * each row annotated with the running balance *after* that transaction (computed
+ * by walking back from the account's current balance). Returns null if the account
+ * isn't the user's.
+ */
+export async function listAccountTransactions(
+  ownerId: string,
+  accountId: string,
+): Promise<{ account: { id: string; name: string; currency: string; currentBalance: string }; rows: (Transaction & { balanceAfter: string })[] } | null> {
+  const acct = (
+    await db.select().from(accounts).where(and(eq(accounts.id, accountId), eq(accounts.ownerId, ownerId))).limit(1)
+  )[0];
+  if (!acct) return null;
+
+  const rows = await db
+    .select()
+    .from(transactions)
+    .where(and(eq(transactions.ownerId, ownerId), eq(transactions.accountId, accountId)))
+    .orderBy(desc(transactions.occurredAt), desc(transactions.createdAt));
+
+  // Walk newest→oldest: balanceAfter[newest] = currentBalance; then undo this row's
+  // signed effect to get the balance *before* it (= balanceAfter of the next row).
+  let running = acct.currentBalance;
+  const annotated = rows.map((r) => {
+    const after = running;
+    const signedEffect = r.direction === "in" ? r.amount : negate(r.amount);
+    running = applyDelta(running, negate(signedEffect)); // undo → balance before this row
+    return { ...r, balanceAfter: after };
+  });
+  return { account: { id: acct.id, name: acct.name, currency: acct.currency, currentBalance: acct.currentBalance }, rows: annotated };
+}
+
+/**
+ * Delete one of the user's transactions and reverse its effect on the account
+ * balance (in a DB transaction). If it was half of a linked transfer, the other
+ * half is left intact but unlinked.
+ */
+export async function deleteTransaction(ownerId: string, txnId: string): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    const row = (
+      await tx.select().from(transactions).where(and(eq(transactions.id, txnId), eq(transactions.ownerId, ownerId))).limit(1)
+    )[0];
+    if (!row) return false;
+
+    // reverse the balance effect: was applied as +amount (in) / -amount (out) → undo
+    const undo = row.direction === "in" ? negate(row.amount) : row.amount;
+    const acct = (await tx.select().from(accounts).where(eq(accounts.id, row.accountId)).limit(1))[0];
+    if (acct) {
+      await tx
+        .update(accounts)
+        .set({ currentBalance: applyDelta(acct.currentBalance, undo), updatedAt: new Date() })
+        .where(eq(accounts.id, row.accountId));
+    }
+    // unlink the other half of a transfer, if any
+    if (row.transferLinkId) {
+      await tx
+        .update(transactions)
+        .set({ transferLinkId: null, updatedAt: new Date() })
+        .where(and(eq(transactions.id, row.transferLinkId), eq(transactions.ownerId, ownerId)));
+    }
+    await tx.delete(transactions).where(and(eq(transactions.id, txnId), eq(transactions.ownerId, ownerId)));
+    return true;
   });
 }
 

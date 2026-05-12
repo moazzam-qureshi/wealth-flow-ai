@@ -33,6 +33,11 @@ export function applyDelta(balance: string, delta: string | number): string {
   return fromMinor(toMinor(balance) + toMinor(delta));
 }
 
+/** Negate a numeric-string (handles "-x" → "x" cleanly, unlike string-prefixing). */
+export function negate(value: string | number): string {
+  return fromMinor(-toMinor(value));
+}
+
 /** Convert an amount from one currency to another using a rate (quote per base). */
 export function convert(amount: string | number, rateQuotePerBase: string | number): string {
   // amountMinor * rateMinor / SCALE  (rate also held at 4dp precision here)

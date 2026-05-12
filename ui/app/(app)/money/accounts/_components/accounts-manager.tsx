@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Card, CcyAvatar, SectionLabel, buttonGhost, buttonPrimary } from "../../../_components/ui";
+import { Card, CcyAvatar, buttonGhost, buttonPrimary } from "../../../_components/ui";
 
 export type ClientAccount = {
   id: string;
@@ -93,17 +94,24 @@ export function AccountsManager({ initialAccounts }: { initialAccounts: ClientAc
             </li>
           ) : (
             <li key={a.id}>
-              <Card className="flex items-center gap-3 p-3">
-                <CcyAvatar currency={a.currency} />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium text-[var(--fg)]">{a.name}</div>
-                  <div className="truncate text-[11px] text-[var(--fg-mut)]">{a.institution ?? TYPE_LABEL[a.type] ?? a.type}{a.notes ? ` · ${a.notes}` : ""}</div>
+              <Card className="p-3">
+                <div className="flex items-center gap-3">
+                  <Link href={`/money/accounts/${a.id}`} className="flex min-w-0 flex-1 items-center gap-3 transition hover:opacity-80">
+                    <CcyAvatar currency={a.currency} />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium text-[var(--fg)]">{a.name}</div>
+                      <div className="truncate text-[11px] text-[var(--fg-mut)]">{a.institution ?? TYPE_LABEL[a.type] ?? a.type}{a.notes ? ` · ${a.notes}` : ""}</div>
+                    </div>
+                    <div className={"readout shrink-0 text-right text-[14px] font-medium " + (Number(a.currentBalance) < 0 ? "text-[var(--coral)]" : "text-[var(--fg)]")}>{fmt(a.currentBalance, a.currency)}</div>
+                  </Link>
+                  <div className="ml-1 flex shrink-0 flex-col gap-1">
+                    <button className="text-[10.5px] text-[var(--fg-mut)] hover:text-[var(--fg)]" onClick={() => { setAdding(false); setEditing(a); }}>edit</button>
+                    <button className="text-[10.5px] text-[var(--fg-faint)] hover:text-[var(--coral)]" onClick={() => setArchived(a.id, true)}>archive</button>
+                  </div>
                 </div>
-                <div className="readout shrink-0 text-right text-[14px] font-medium text-[var(--fg)]">{fmt(a.currentBalance, a.currency)}</div>
-                <div className="ml-1 flex shrink-0 flex-col gap-1">
-                  <button className="text-[10.5px] text-[var(--fg-mut)] hover:text-[var(--fg)]" onClick={() => { setAdding(false); setEditing(a); }}>edit</button>
-                  <button className="text-[10.5px] text-[var(--fg-faint)] hover:text-[var(--coral)]" onClick={() => setArchived(a.id, true)}>archive</button>
-                </div>
+                <Link href={`/money/accounts/${a.id}`} className="mt-2 block text-[11px] text-[var(--fg-faint)] underline-offset-2 hover:text-[var(--fg-mut)] hover:underline">
+                  view history →
+                </Link>
               </Card>
             </li>
           ),

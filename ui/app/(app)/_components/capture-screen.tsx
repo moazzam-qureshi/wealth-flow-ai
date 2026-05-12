@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { buttonGhost, buttonPrimary } from "./ui";
 
@@ -60,7 +61,7 @@ function dollars(n: number | null) {
   return n === null ? "—" : `$${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 }
 
-type Phase = "idle" | "uploading" | "review" | "saved";
+type Phase = "idle" | "uploading" | "review" | "saved" | "manual";
 
 export function CaptureScreen(props: {
   recentUploads: { id: string; status: string; uploadedAt: string }[];
@@ -89,22 +90,26 @@ export function CaptureScreen(props: {
 
   // arrived from the Web Share Target → ?uploadId=… ; process it on mount
   const sharedUploadId = params.get("uploadId");
+  const wantManual = params.get("manual") === "1";
   useEffect(() => {
-    if (!sharedUploadId || extract) return;
-    setPhase("uploading");
-    (async () => {
-      try {
-        const res = await fetch(`/api/uploads/${sharedUploadId}`);
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error ?? "Couldn't process shared image");
-        enterReview(data as ExtractResponse);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Couldn't process shared image");
-        setPhase("idle");
-      }
-    })();
+    if (sharedUploadId && !extract) {
+      setPhase("uploading");
+      (async () => {
+        try {
+          const res = await fetch(`/api/uploads/${sharedUploadId}`);
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error ?? "Couldn't process shared image");
+          enterReview(data as ExtractResponse);
+        } catch (e) {
+          setError(e instanceof Error ? e.message : "Couldn't process shared image");
+          setPhase("idle");
+        }
+      })();
+    } else if (wantManual) {
+      setPhase("manual");
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sharedUploadId]);
+  }, [sharedUploadId, wantManual]);
 
   function enterReview(r: ExtractResponse) {
     setExtract(r);
@@ -274,6 +279,24 @@ export function CaptureScreen(props: {
           <button className={buttonPrimary()} onClick={() => { reset(); setTimeout(() => fileRef.current?.click(), 50); }}>Add another</button>
           <button className={buttonGhost()} onClick={() => { reset(); router.push("/money"); }}>See the numbers →</button>
         </div>
+      </div>
+    );
+  }
+
+  // ── MANUAL — type a transaction in (no screenshot) ─────────────────────────
+  if (phase === "manual") {
+    return (
+      <div className="space-y-4 pb-8">
+        {hiddenInput}
+        <div className="wf-rise flex items-center justify-between">
+          <h2 className="font-display text-lg font-semibold">Add a transaction</h2>
+          <button className="text-[12px] text-[var(--fg-mut)] underline-offset-2 hover:underline" onClick={reset}>← back</button>
+        </div>
+        <ManualForm
+          onSaved={() => { setPhase("saved"); setSavedCount(1); router.refresh(); }}
+          onError={setError}
+        />
+        {error && <ErrorBanner>{error}</ErrorBanner>}
       </div>
     );
   }
@@ -462,20 +485,29 @@ export function CaptureScreen(props: {
         </span>
       </button>
 
+      {/* enter manually — for cash, transfers, anything without a receipt */}
+      <button
+        onClick={() => { setError(null); setPhase("manual"); }}
+        className="wf-rise w-full rounded-2xl border border-line bg-[var(--bg-soft)] px-4 py-3 text-sm text-[var(--fg-dim)] transition hover:bg-[var(--card-hi)] hover:text-[var(--fg)]"
+        style={{ animationDelay: "60ms" }}
+      >
+        …or <span className="text-[var(--fg)]">enter a transaction manually</span> (cash, transfers, no receipt)
+      </button>
+
       {/* this-week strip — calm, non-guilting */}
       <div className="wf-rise flex items-center justify-between rounded-2xl border border-line bg-[var(--bg-soft)] px-4 py-3" style={{ animationDelay: "80ms" }}>
         <div className="text-sm text-[var(--fg-dim)]">
           <span className="readout text-[var(--fg)]">{props.thisWeek}</span> transaction{props.thisWeek === 1 ? "" : "s"} this week
         </div>
-        <a href="/money" className="text-[12px] text-[var(--fg-mut)] underline-offset-2 hover:underline">
+        <Link href="/money" className="text-[12px] text-[var(--fg-mut)] underline-offset-2 hover:underline">
           {props.netWorthUsd !== null ? `net worth ${dollars(props.netWorthUsd)} →` : "see the numbers →"}
-        </a>
+        </Link>
       </div>
 
       {!props.hasAccounts && (
         <div className="wf-rise rounded-2xl border border-dashed border-line p-4 text-sm text-[var(--fg-mut)]" style={{ animationDelay: "120ms" }}>
           First, map your financial reality —{" "}
-          <a href="/money/accounts" className="text-[var(--mint)] underline">add your accounts</a> (banks, fintech, exchanges, wallets, cash).
+          <Link href="/money/accounts" className="text-[var(--mint)] underline">add your accounts</Link> (banks, fintech, exchanges, wallets, cash).
         </div>
       )}
 
@@ -542,5 +574,217 @@ function TransferPrompt({ prompt, onPick }: { prompt: { savedTxnId: string; cand
       </ul>
       <button className="text-[12px] text-[var(--fg-faint)] underline" onClick={() => onPick(null)}>No, none of these</button>
     </div>
+  );
+}
+
+// ── manual transaction form (no screenshot) ──────────────────────────────────
+function ManualForm({ onSaved, onError }: { onSaved: () => void; onError: (m: string | null) => void }) {
+  const router = useRouter();
+  const params = useSearchParams();
+  const presetAccountId = params.get("accountId") || "";
+
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [loadingAccounts, setLoadingAccounts] = useState(true);
+  const [accountId, setAccountId] = useState(presetAccountId);
+  const [newAccount, setNewAccount] = useState<{ name: string; type: string; currency: string } | null>(null);
+  const [creatingAccount, setCreatingAccount] = useState(false);
+
+  const [amount, setAmount] = useState("");
+  const [direction, setDirection] = useState<"in" | "out">("out");
+  const [txnType, setTxnType] = useState<(typeof TXN_TYPES)[number][0]>("expense");
+  const [counterparty, setCounterparty] = useState("");
+  const [category, setCategory] = useState("");
+  const [externalId, setExternalId] = useState("");
+  const [occurredLocal, setOccurredLocal] = useState(isoLocal(new Date()));
+  const [notes, setNotes] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [transferPrompt, setTransferPrompt] = useState<{ savedTxnId: string; candidates: TransferCandidate[] } | null>(null);
+
+  const selectedAccount = accounts.find((a) => a.id === accountId);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/accounts");
+        const data = await res.json();
+        const active = ((data.accounts ?? []) as (Account & { archived?: string | null })[]).filter((a) => !a.archived);
+        setAccounts(active.map((a) => ({ id: a.id, name: a.name, currency: a.currency, institution: a.institution })));
+        if (!presetAccountId && active[0]) setAccountId(active[0].id);
+      } catch {
+        onError("Couldn't load your accounts.");
+      } finally {
+        setLoadingAccounts(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function createAccount() {
+    if (!newAccount || !newAccount.name.trim()) { onError("Give the account a name."); return; }
+    setCreatingAccount(true);
+    onError(null);
+    try {
+      const res = await fetch("/api/accounts", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: newAccount.name.trim(), type: newAccount.type, currency: newAccount.currency }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Couldn't create the account");
+      const acc = data.account as { id: string; name: string; currency: string; institution: string | null };
+      setAccounts((a) => [...a, { id: acc.id, name: acc.name, currency: acc.currency, institution: acc.institution }]);
+      setAccountId(acc.id);
+      setNewAccount(null);
+      router.refresh();
+    } catch (e) {
+      onError(e instanceof Error ? e.message : "Couldn't create the account");
+    } finally {
+      setCreatingAccount(false);
+    }
+  }
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    onError(null);
+    if (!accountId) { onError(newAccount ? 'Tap "Create & use" to add the account first.' : "Pick an account."); return; }
+    const amt = Number(amount);
+    if (!amt || amt <= 0) { onError("Enter an amount greater than 0."); return; }
+    const when = new Date(occurredLocal);
+    if (Number.isNaN(when.getTime())) { onError("Pick a valid date/time."); return; }
+    setBusy(true);
+    try {
+      const res = await fetch("/api/transactions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          accountId,
+          externalId: externalId.trim() || null,
+          amount: String(amt),
+          currency: (selectedAccount?.currency || "PKR").toUpperCase(),
+          direction,
+          txnType,
+          counterparty: counterparty.trim() || null,
+          category: category.trim() || null,
+          occurredAt: when.toISOString(),
+          notes: notes.trim() || null,
+        }),
+      });
+      const data = (await res.json()) as SaveResponse & { error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Save failed");
+      if (Array.isArray(data.transferCandidates) && data.transferCandidates.length > 0) {
+        setTransferPrompt({ savedTxnId: data.transaction.id, candidates: data.transferCandidates });
+        return; // let them resolve the transfer prompt; we'll finish after
+      }
+      onSaved();
+    } catch (e) {
+      onError(e instanceof Error ? e.message : "Save failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resolveTransfer(otherId: string | null) {
+    if (transferPrompt && otherId) {
+      await fetch("/api/transactions/link", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ txnIdA: transferPrompt.savedTxnId, txnIdB: otherId }),
+      });
+    }
+    setTransferPrompt(null);
+    onSaved();
+  }
+
+  if (transferPrompt) {
+    return <TransferPrompt prompt={transferPrompt} onPick={resolveTransfer} />;
+  }
+
+  return (
+    <form className="card wf-rise space-y-3 p-4" onSubmit={submit}>
+      {/* account */}
+      <Field label="Account">
+        {loadingAccounts ? (
+          <div className="h-10 animate-pulse rounded-lg bg-[var(--bg-soft)]" />
+        ) : (
+          <select
+            className="w-full truncate px-3 py-2.5 text-sm"
+            value={newAccount ? "__new__" : accountId}
+            onChange={(e) => {
+              if (e.target.value === "__new__") setNewAccount({ name: "", type: "fintech", currency: "PKR" });
+              else { setNewAccount(null); setAccountId(e.target.value); }
+            }}
+          >
+            {accounts.length === 0 && <option value="">— no accounts yet —</option>}
+            {accounts.length > 0 && <option value="">— choose —</option>}
+            {accounts.map((a) => <option key={a.id} value={a.id}>{a.name} ({a.currency}){a.institution ? ` · ${a.institution}` : ""}</option>)}
+            <option value="__new__">+ New account…</option>
+          </select>
+        )}
+      </Field>
+
+      {newAccount && (
+        <div className="space-y-2.5 rounded-xl border border-dashed border-line bg-[var(--bg-soft)] p-3">
+          <div className="text-[11px] uppercase tracking-[0.1em] text-[var(--fg-mut)]">New account</div>
+          <input className="w-full px-3 py-2.5 text-sm" value={newAccount.name} onChange={(e) => setNewAccount((n) => (n ? { ...n, name: e.target.value } : n))} placeholder="Account name" />
+          <div className="grid grid-cols-2 gap-2.5">
+            <select className="w-full px-3 py-2.5 text-sm" value={newAccount.type} onChange={(e) => setNewAccount((n) => (n ? { ...n, type: e.target.value } : n))}>
+              {ACCOUNT_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+            <select className="w-full px-3 py-2.5 text-sm" value={newAccount.currency} onChange={(e) => setNewAccount((n) => (n ? { ...n, currency: e.target.value } : n))}>
+              {COMMON_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <button type="button" className={buttonPrimary("!px-4 !py-2 !text-[13px]")} disabled={creatingAccount} onClick={createAccount}>{creatingAccount ? "Creating…" : "Create & use"}</button>
+            {accounts.length > 0 && <button type="button" className={buttonGhost("!px-3 !py-2 !text-[13px]")} onClick={() => setNewAccount(null)}>Cancel</button>}
+          </div>
+        </div>
+      )}
+
+      {/* amount + direction */}
+      <div className="grid grid-cols-2 gap-2.5">
+        <Field label={`Amount${selectedAccount ? ` (${selectedAccount.currency})` : ""}`}>
+          <input className="readout w-full px-3 py-2.5 text-right text-[15px]" inputMode="decimal" placeholder="0" value={amount} onChange={(e) => setAmount(e.target.value)} />
+        </Field>
+        <Field label="Direction">
+          <div className="flex gap-1.5">
+            <SegBtn active={direction === "out"} onClick={() => setDirection("out")} tone="coral">Out</SegBtn>
+            <SegBtn active={direction === "in"} onClick={() => setDirection("in")} tone="mint">In</SegBtn>
+          </div>
+        </Field>
+      </div>
+
+      {/* type + date */}
+      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+        <Field label="Type">
+          <select className="w-full px-3 py-2.5 text-sm" value={txnType} onChange={(e) => setTxnType(e.target.value as typeof txnType)}>
+            {TXN_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </select>
+        </Field>
+        <Field label="Date / time">
+          <input type="datetime-local" className="w-full px-3 py-2.5 text-sm" value={occurredLocal} onChange={(e) => setOccurredLocal(e.target.value)} />
+        </Field>
+      </div>
+
+      <Field label="Counterparty (optional)">
+        <input className="w-full px-3 py-2.5 text-sm" placeholder="merchant / sender / receiver" value={counterparty} onChange={(e) => setCounterparty(e.target.value)} />
+      </Field>
+      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+        <Field label="Category (optional)">
+          <input className="w-full px-3 py-2.5 text-sm" placeholder="e.g. groceries" value={category} onChange={(e) => setCategory(e.target.value)} />
+        </Field>
+        <Field label="Reference id (optional)">
+          <input className="readout w-full px-3 py-2.5 text-sm" placeholder="bank/fintech ref — helps dedup" value={externalId} onChange={(e) => setExternalId(e.target.value)} />
+        </Field>
+      </div>
+      <Field label="Notes (optional)">
+        <input className="w-full px-3 py-2.5 text-sm" value={notes} onChange={(e) => setNotes(e.target.value)} />
+      </Field>
+
+      <p className="text-[11px] text-[var(--fg-faint)]">
+        Tip: this updates the account&apos;s balance. For a one-off correction (not a real transaction), edit the account&apos;s balance on the <Link href="/money/accounts" className="underline">Accounts</Link> screen instead.
+      </p>
+      <button type="submit" disabled={busy} className={buttonPrimary("w-full")}>{busy ? "Saving…" : "Save transaction"}</button>
+    </form>
   );
 }
