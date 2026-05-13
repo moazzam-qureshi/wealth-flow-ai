@@ -64,7 +64,6 @@ function dollars(n: number | null) {
 type Phase = "idle" | "uploading" | "review" | "saved" | "manual";
 
 export function CaptureScreen(props: {
-  recentUploads: { id: string; status: string; uploadedAt: string }[];
   thisWeek: number;
   netWorthUsd: number | null;
   displayCurrency: string;
@@ -556,31 +555,6 @@ export function CaptureScreen(props: {
         </div>
       )}
 
-      {/* recent uploads */}
-      {props.recentUploads.length > 0 && (
-        <div className="wf-rise" style={{ animationDelay: "140ms" }}>
-          <div className="mb-2 text-[11px] uppercase tracking-[0.12em] text-[var(--fg-mut)]">Recent uploads</div>
-          <div className="flex gap-2 overflow-x-auto pb-1">
-            {props.recentUploads.map((u) => (
-              <button
-                key={u.id}
-                onClick={() => {
-                  setPhase("uploading");
-                  setError(null);
-                  fetch(`/api/uploads/${u.id}`)
-                    .then((r) => r.json())
-                    .then((d) => { if (d.error) throw new Error(d.error); enterReview(d as ExtractResponse); })
-                    .catch((e) => { setError(e instanceof Error ? e.message : "Couldn't re-open"); setPhase("idle"); });
-                }}
-                className="grid h-14 w-14 shrink-0 place-items-center rounded-xl border border-line bg-[var(--bg-soft)] text-[var(--fg-faint)] transition hover:border-[var(--mint-dim)] hover:text-[var(--mint)]"
-                title={`Uploaded ${new Date(u.uploadedAt).toLocaleString()} · ${u.status}`}
-              >
-                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.6"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m3 16 5-5 4 4 3-3 6 6" /></svg>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
