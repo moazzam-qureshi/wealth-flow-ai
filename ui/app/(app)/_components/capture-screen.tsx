@@ -83,7 +83,9 @@ export function CaptureScreen(props: {
   const [accountId, setAccountId] = useState("");
   const [newAccount, setNewAccount] = useState<{ name: string; type: string; currency: string } | null>(null);
   const [creatingAccount, setCreatingAccount] = useState(false);
-  const [drafts, setDrafts] = useState<(ReviewTxn & { occurredLocal: string })[]>([]);
+  // destAccountId: the OTHER account a transfer/investment lands in. Only used
+  // when txnType is "transfer" | "investment"; required at save time.
+  const [drafts, setDrafts] = useState<(ReviewTxn & { occurredLocal: string; destAccountId: string | null })[]>([]);
   const [savedCount, setSavedCount] = useState(0);
   const [payoff, setPayoff] = useState<{ netWorthUsd: number | null; monthlyBurnUsd: number | null } | null>(null);
   const [transferPrompt, setTransferPrompt] = useState<{ savedTxnId: string; candidates: TransferCandidate[] } | null>(null);
@@ -121,7 +123,13 @@ export function CaptureScreen(props: {
       const ccy = r.transactions[0]?.currency?.toUpperCase() || "PKR";
       setNewAccount({ name: r.detectedInstitution, type: "fintech", currency: ccy });
     }
-    setDrafts(r.transactions.map((t) => ({ ...t, occurredLocal: t.occurredAt ? isoLocal(new Date(t.occurredAt)) : isoLocal(new Date()) })));
+    setDrafts(
+      r.transactions.map((t) => ({
+        ...t,
+        occurredLocal: t.occurredAt ? isoLocal(new Date(t.occurredAt)) : isoLocal(new Date()),
+        destAccountId: null,
+      })),
+    );
     setPhase("review");
   }
 
@@ -176,17 +184,27 @@ export function CaptureScreen(props: {
     const t = drafts[i];
     if (!accountId) return setError(newAccount ? 'Tap "Create & use" to add the account first.' : "Pick an account first.");
     if (!t.externalId) return setError("This receipt has no reference id — type it in (look on the receipt) so duplicates can be caught.");
+
+    const twoLegged = t.txnType === "transfer" || t.txnType === "investment";
+    if (twoLegged) {
+      if (!t.destAccountId) return setError(`Pick the destination account — where the money lands for this ${t.txnType}.`);
+      if (t.destAccountId === accountId) return setError("Source and destination must be different accounts.");
+    }
+
     try {
       const res = await fetch("/api/transactions", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           accountId,
+          // Two-legged moves are recorded as the OUT leg on the source; the dest
+          // leg is created automatically on the server.
+          destAccountId: twoLegged ? t.destAccountId : null,
           uploadId: extract?.uploadId ?? null,
           externalId: t.externalId,
           amount: t.amount,
           currency: t.currency,
-          direction: t.direction,
+          direction: twoLegged ? "out" : t.direction,
           txnType: t.txnType,
           counterparty: t.counterparty,
           category: t.category,
@@ -413,16 +431,43 @@ export function CaptureScreen(props: {
             <div className="grid grid-cols-2 gap-2.5">
               <Field label="Direction">
                 <div className="flex gap-1.5">
-                  <SegBtn active={t.direction === "out"} onClick={() => patchDraft(i, { direction: "out" })} tone="coral">Out</SegBtn>
-                  <SegBtn active={t.direction === "in"} onClick={() => patchDraft(i, { direction: "in" })} tone="mint">In</SegBtn>
+                  <SegBtn active={t.direction === "out"} onClick={() => patchDraft(i, { direction: "out" })} tone="coral" disabled={t.txnType === "transfer" || t.txnType === "investment"}>Out</SegBtn>
+                  <SegBtn active={t.direction === "in"} onClick={() => patchDraft(i, { direction: "in" })} tone="mint" disabled={t.txnType === "transfer" || t.txnType === "investment"}>In</SegBtn>
                 </div>
               </Field>
               <Field label="Type">
-                <select className="w-full px-3 py-2.5 text-sm" value={t.txnType} onChange={(e) => patchDraft(i, { txnType: e.target.value as (typeof drafts)[number]["txnType"] })}>
+                <select
+                  className="w-full px-3 py-2.5 text-sm"
+                  value={t.txnType}
+                  onChange={(e) => {
+                    const next = e.target.value as (typeof drafts)[number]["txnType"];
+                    // transfer/investment is always recorded as the OUT leg on the source side.
+                    patchDraft(i, { txnType: next, ...(next === "transfer" || next === "investment" ? { direction: "out" } : {}) });
+                  }}
+                >
                   {TXN_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                 </select>
               </Field>
             </div>
+            {(t.txnType === "transfer" || t.txnType === "investment") && (
+              <Field label={`To account · where the ${t.txnType === "investment" ? "investment" : "money"} lands`}>
+                <select
+                  className="w-full truncate px-3 py-2.5 text-sm"
+                  value={t.destAccountId ?? ""}
+                  onChange={(e) => patchDraft(i, { destAccountId: e.target.value || null })}
+                >
+                  <option value="">— choose destination —</option>
+                  {accounts.filter((a) => a.id !== accountId).map((a) => (
+                    <option key={a.id} value={a.id}>{a.name} ({a.currency}){a.institution ? ` · ${a.institution}` : ""}</option>
+                  ))}
+                </select>
+                {accounts.filter((a) => a.id !== accountId).length === 0 && (
+                  <p className="mt-1 text-[11px] text-[var(--amber)]">
+                    No other accounts yet. <a href="/money/accounts" className="underline">Add one</a> (the {t.txnType === "investment" ? "broker / exchange" : "destination"}), then come back.
+                  </p>
+                )}
+              </Field>
+            )}
             <Field label="Counterparty">
               <input className="w-full px-3 py-2.5 text-sm" value={t.counterparty ?? ""} onChange={(e) => patchDraft(i, { counterparty: e.target.value || null })} placeholder="merchant / sender / receiver" />
             </Field>
@@ -549,10 +594,17 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     </label>
   );
 }
-function SegBtn({ active, onClick, children, tone }: { active: boolean; onClick: () => void; children: React.ReactNode; tone: "mint" | "coral" }) {
+function SegBtn({ active, onClick, children, tone, disabled }: { active: boolean; onClick: () => void; children: React.ReactNode; tone: "mint" | "coral"; disabled?: boolean }) {
   const onCls = tone === "mint" ? "bg-[var(--mint-glow)] text-[var(--mint)] border-[var(--mint-dim)]" : "bg-[rgba(255,107,107,0.12)] text-[var(--coral)] border-[var(--coral-dim)]";
   return (
-    <button type="button" onClick={onClick} className={"flex-1 rounded-lg border px-3 py-2.5 text-sm font-medium transition " + (active ? onCls : "border-line text-[var(--fg-mut)] hover:text-[var(--fg-dim)]")}>{children}</button>
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={"flex-1 rounded-lg border px-3 py-2.5 text-sm font-medium transition " + (active ? onCls : "border-line text-[var(--fg-mut)] hover:text-[var(--fg-dim)]") + (disabled ? " opacity-60 cursor-not-allowed" : "")}
+    >
+      {children}
+    </button>
   );
 }
 function ErrorBanner({ children }: { children: React.ReactNode }) {
@@ -592,6 +644,7 @@ function ManualForm({ onSaved, onError }: { onSaved: () => void; onError: (m: st
   const [amount, setAmount] = useState("");
   const [direction, setDirection] = useState<"in" | "out">("out");
   const [txnType, setTxnType] = useState<(typeof TXN_TYPES)[number][0]>("expense");
+  const [destAccountId, setDestAccountId] = useState<string>(""); // only used for transfer/investment
   const [counterparty, setCounterparty] = useState("");
   const [category, setCategory] = useState("");
   const [externalId, setExternalId] = useState("");
@@ -651,6 +704,11 @@ function ManualForm({ onSaved, onError }: { onSaved: () => void; onError: (m: st
     if (!amt || amt <= 0) { onError("Enter an amount greater than 0."); return; }
     const when = new Date(occurredLocal);
     if (Number.isNaN(when.getTime())) { onError("Pick a valid date/time."); return; }
+    const twoLegged = txnType === "transfer" || txnType === "investment";
+    if (twoLegged) {
+      if (!destAccountId) { onError(`Pick the destination account for this ${txnType}.`); return; }
+      if (destAccountId === accountId) { onError("Source and destination must be different accounts."); return; }
+    }
     setBusy(true);
     try {
       const res = await fetch("/api/transactions", {
@@ -658,10 +716,11 @@ function ManualForm({ onSaved, onError }: { onSaved: () => void; onError: (m: st
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           accountId,
+          destAccountId: twoLegged ? destAccountId : null,
           externalId: externalId.trim() || null,
           amount: String(amt),
           currency: (selectedAccount?.currency || "PKR").toUpperCase(),
-          direction,
+          direction: twoLegged ? "out" : direction,
           txnType,
           counterparty: counterparty.trim() || null,
           category: category.trim() || null,
@@ -748,8 +807,8 @@ function ManualForm({ onSaved, onError }: { onSaved: () => void; onError: (m: st
         </Field>
         <Field label="Direction">
           <div className="flex gap-1.5">
-            <SegBtn active={direction === "out"} onClick={() => setDirection("out")} tone="coral">Out</SegBtn>
-            <SegBtn active={direction === "in"} onClick={() => setDirection("in")} tone="mint">In</SegBtn>
+            <SegBtn active={direction === "out"} onClick={() => setDirection("out")} tone="coral" disabled={txnType === "transfer" || txnType === "investment"}>Out</SegBtn>
+            <SegBtn active={direction === "in"} onClick={() => setDirection("in")} tone="mint" disabled={txnType === "transfer" || txnType === "investment"}>In</SegBtn>
           </div>
         </Field>
       </div>
@@ -757,7 +816,15 @@ function ManualForm({ onSaved, onError }: { onSaved: () => void; onError: (m: st
       {/* type + date */}
       <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
         <Field label="Type">
-          <select className="w-full px-3 py-2.5 text-sm" value={txnType} onChange={(e) => setTxnType(e.target.value as typeof txnType)}>
+          <select
+            className="w-full px-3 py-2.5 text-sm"
+            value={txnType}
+            onChange={(e) => {
+              const next = e.target.value as typeof txnType;
+              setTxnType(next);
+              if (next === "transfer" || next === "investment") setDirection("out"); // two-legged is always recorded out from source
+            }}
+          >
             {TXN_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select>
         </Field>
@@ -765,6 +832,22 @@ function ManualForm({ onSaved, onError }: { onSaved: () => void; onError: (m: st
           <input type="datetime-local" className="w-full px-3 py-2.5 text-sm" value={occurredLocal} onChange={(e) => setOccurredLocal(e.target.value)} />
         </Field>
       </div>
+
+      {(txnType === "transfer" || txnType === "investment") && (
+        <Field label={`To account · where the ${txnType === "investment" ? "investment" : "money"} lands`}>
+          <select className="w-full truncate px-3 py-2.5 text-sm" value={destAccountId} onChange={(e) => setDestAccountId(e.target.value)}>
+            <option value="">— choose destination —</option>
+            {accounts.filter((a) => a.id !== accountId).map((a) => (
+              <option key={a.id} value={a.id}>{a.name} ({a.currency}){a.institution ? ` · ${a.institution}` : ""}</option>
+            ))}
+          </select>
+          {accounts.filter((a) => a.id !== accountId).length === 0 && (
+            <p className="mt-1 text-[11px] text-[var(--amber)]">
+              No other accounts yet. <a href="/money/accounts" className="underline">Add one</a> (the {txnType === "investment" ? "broker / exchange" : "destination"}) first.
+            </p>
+          )}
+        </Field>
+      )}
 
       <Field label="Counterparty (optional)">
         <input className="w-full px-3 py-2.5 text-sm" placeholder="merchant / sender / receiver" value={counterparty} onChange={(e) => setCounterparty(e.target.value)} />

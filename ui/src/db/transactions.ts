@@ -4,6 +4,15 @@
  * pass the authenticated user's id; an account hint that isn't owned by that user
  * is treated as not-found.
  *
+ * Two flavors of save:
+ *   - `saveConfirmedTransaction` (income / expense): one row, one balance update.
+ *     The destination of an expense is the outside world; not modeled.
+ *   - `saveTwoLeggedTransaction` (transfer / investment): the money moves between
+ *     two of the user's own accounts — so we insert BOTH legs in one DB
+ *     transaction, pre-link them via transferLinkId, and update BOTH balances.
+ *     This is how "money leaves ElevatePay AND arrives at IBKR" stays consistent
+ *     (the old single-leg path made the money vanish).
+ *
  * Dedup key = (accountId, externalId). When externalId is null we can't dedup, so
  * the UI nudges the user to supply it before saving.
  */
@@ -122,6 +131,149 @@ export async function saveConfirmedTransaction(ownerId: string, input: SaveTxnIn
   });
 }
 
+export type SaveTwoLeggedInput = {
+  sourceAccountId: string;
+  destAccountId: string;
+  uploadId?: string | null;
+  /** Reference id from the source-side receipt (dedup on the source leg). Dest leg
+   *  has no externalId — it's a synthetic counterpart. */
+  externalId?: string | null;
+  /** Amount in the source account's currency. Always positive. */
+  amount: string;
+  sourceCurrency: string;
+  /** If the source and dest are in different currencies, the amount that actually
+   *  lands on the dest side (e.g. USD bought with PKR). Defaults to `amount` when
+   *  currencies match and is left null otherwise — the user can edit later. */
+  destAmount?: string | null;
+  destCurrency?: string | null;
+  txnType: "transfer" | "investment";
+  counterparty?: string | null;
+  category?: string | null;
+  occurredAt: Date;
+  confidence?: number | null;
+  rawExtractedJson?: unknown;
+  notes?: string | null;
+};
+
+/**
+ * Save a two-legged transaction (transfer or investment) — money moves between
+ * two of the user's own accounts. Atomic: either both legs + both balance updates
+ * succeed, or nothing does. The two rows are pre-linked via `transferLinkId`.
+ *
+ * Throws:
+ *   - SAME_ACCOUNT if source and dest are the same
+ *   - ACCOUNT_NOT_FOUND if either account isn't owned by `ownerId`
+ *   - DUPLICATE_TRANSACTION if (sourceAccountId, externalId) already exists
+ */
+export async function saveTwoLeggedTransaction(
+  ownerId: string,
+  input: SaveTwoLeggedInput,
+): Promise<{ source: Transaction; dest: Transaction }> {
+  if (input.sourceAccountId === input.destAccountId) {
+    throw new Error("SAME_ACCOUNT");
+  }
+
+  return db.transaction(async (tx) => {
+    const owned = await tx
+      .select()
+      .from(accounts)
+      .where(and(eq(accounts.ownerId, ownerId)));
+    const src = owned.find((a) => a.id === input.sourceAccountId);
+    const dst = owned.find((a) => a.id === input.destAccountId);
+    if (!src || !dst) throw new Error("ACCOUNT_NOT_FOUND");
+
+    if (input.externalId) {
+      const dup = await tx
+        .select({ id: transactions.id })
+        .from(transactions)
+        .where(and(eq(transactions.accountId, input.sourceAccountId), eq(transactions.externalId, input.externalId)))
+        .limit(1);
+      if (dup[0]) {
+        const e = new Error("DUPLICATE_TRANSACTION");
+        (e as { code?: string }).code = "DUPLICATE_TRANSACTION";
+        throw e;
+      }
+    }
+
+    const sourceCurrency = input.sourceCurrency.trim().toUpperCase();
+    const destCurrency = (input.destCurrency ?? src.currency).trim().toUpperCase();
+    // If currencies match and destAmount wasn't specified, mirror the amount. If
+    // they differ and no destAmount was given, leave it equal — the user can edit
+    // the dest leg later. (We don't auto-convert via FX here: rates drift, and the
+    // user knows the actual landed amount from their statement.)
+    const destAmount = (input.destAmount ?? input.amount).trim();
+
+    // Insert source leg (out) first — needs an id to point dest's transferLinkId at.
+    const [source] = await tx
+      .insert(transactions)
+      .values({
+        ownerId,
+        accountId: input.sourceAccountId,
+        uploadId: input.uploadId ?? null,
+        externalId: input.externalId ?? null,
+        amount: input.amount,
+        currency: sourceCurrency,
+        direction: "out",
+        txnType: input.txnType,
+        counterparty: input.counterparty?.trim() || dst.name,
+        category: input.category?.trim() || null,
+        occurredAt: input.occurredAt,
+        confidence: input.confidence ?? null,
+        rawExtractedJson: input.rawExtractedJson ?? null,
+        status: "confirmed",
+        notes: input.notes?.trim() || null,
+      })
+      .returning();
+
+    const [dest] = await tx
+      .insert(transactions)
+      .values({
+        ownerId,
+        accountId: input.destAccountId,
+        uploadId: input.uploadId ?? null,
+        externalId: null, // synthetic counterpart — no receipt
+        amount: destAmount,
+        currency: destCurrency,
+        direction: "in",
+        txnType: input.txnType,
+        counterparty: input.counterparty?.trim() || src.name,
+        category: input.category?.trim() || null,
+        occurredAt: input.occurredAt,
+        confidence: input.confidence ?? null,
+        status: "confirmed",
+        notes: input.notes?.trim() || null,
+        transferLinkId: source!.id,
+      })
+      .returning();
+
+    // close the link: point source at dest
+    await tx
+      .update(transactions)
+      .set({ transferLinkId: dest!.id, updatedAt: new Date() })
+      .where(eq(transactions.id, source!.id));
+
+    // update both balances
+    await tx
+      .update(accounts)
+      .set({
+        currentBalance: applyDelta(src.currentBalance, negate(input.amount)),
+        lastReconciledAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(accounts.id, src.id));
+    await tx
+      .update(accounts)
+      .set({
+        currentBalance: applyDelta(dst.currentBalance, destAmount),
+        lastReconciledAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(accounts.id, dst.id));
+
+    return { source: { ...source!, transferLinkId: dest!.id }, dest: dest! };
+  });
+}
+
 /**
  * The full transaction history for one of the user's accounts (newest first),
  * each row annotated with the running balance *after* that transaction (computed
@@ -157,8 +309,11 @@ export async function listAccountTransactions(
 
 /**
  * Delete one of the user's transactions and reverse its effect on the account
- * balance (in a DB transaction). If it was half of a linked transfer, the other
- * half is left intact but unlinked.
+ * balance (in a DB transaction). If it was half of a linked transfer/investment,
+ * BOTH legs are deleted and BOTH balances are reversed — keeping the pair
+ * consistent (the alternative, leaving the other half dangling, makes the totals
+ * mysteriously wrong). Use `unlinkTransfer` first if you want to break the link
+ * and keep one of the legs as a standalone transaction.
  */
 export async function deleteTransaction(ownerId: string, txnId: string): Promise<boolean> {
   return db.transaction(async (tx) => {
@@ -167,23 +322,35 @@ export async function deleteTransaction(ownerId: string, txnId: string): Promise
     )[0];
     if (!row) return false;
 
-    // reverse the balance effect: was applied as +amount (in) / -amount (out) → undo
-    const undo = row.direction === "in" ? negate(row.amount) : row.amount;
-    const acct = (await tx.select().from(accounts).where(eq(accounts.id, row.accountId)).limit(1))[0];
-    if (acct) {
-      await tx
-        .update(accounts)
-        .set({ currentBalance: applyDelta(acct.currentBalance, undo), updatedAt: new Date() })
-        .where(eq(accounts.id, row.accountId));
-    }
-    // unlink the other half of a transfer, if any
+    // collect rows to delete: this one, plus the linked half if any
+    const toDelete: Transaction[] = [row];
     if (row.transferLinkId) {
-      await tx
-        .update(transactions)
-        .set({ transferLinkId: null, updatedAt: new Date() })
-        .where(and(eq(transactions.id, row.transferLinkId), eq(transactions.ownerId, ownerId)));
+      const other = (
+        await tx
+          .select()
+          .from(transactions)
+          .where(and(eq(transactions.id, row.transferLinkId), eq(transactions.ownerId, ownerId)))
+          .limit(1)
+      )[0];
+      if (other) toDelete.push(other);
     }
-    await tx.delete(transactions).where(and(eq(transactions.id, txnId), eq(transactions.ownerId, ownerId)));
+
+    // reverse each row's balance effect
+    for (const r of toDelete) {
+      const undo = r.direction === "in" ? negate(r.amount) : r.amount;
+      const acct = (await tx.select().from(accounts).where(eq(accounts.id, r.accountId)).limit(1))[0];
+      if (acct) {
+        await tx
+          .update(accounts)
+          .set({ currentBalance: applyDelta(acct.currentBalance, undo), updatedAt: new Date() })
+          .where(eq(accounts.id, r.accountId));
+      }
+    }
+
+    // delete the rows themselves
+    for (const r of toDelete) {
+      await tx.delete(transactions).where(and(eq(transactions.id, r.id), eq(transactions.ownerId, ownerId)));
+    }
     return true;
   });
 }
