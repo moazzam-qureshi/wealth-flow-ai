@@ -90,6 +90,7 @@ export const POST = handler(async (req: Request) => {
       });
       return json(
         {
+          path: "two-legged",
           transaction: { id: source.id, accountId: source.accountId, amount: source.amount, currency: source.currency, direction: source.direction, txnType: source.txnType, counterparty: source.counterparty, category: source.category, occurredAt: source.occurredAt.toISOString() },
           counterpart: { id: dest.id, accountId: dest.accountId, amount: dest.amount, currency: dest.currency, direction: dest.direction },
           transferCandidates: [], // already linked — no need to prompt
@@ -106,7 +107,17 @@ export const POST = handler(async (req: Request) => {
     }
   }
 
-  // Single-leg (income / expense) path.
+  // Single-leg (income / expense) path. Defensive log: a transfer/investment
+  // should never reach this branch (superRefine + the `if (twoLegged)` above
+  // guarantee it). If it does, something is seriously wrong with validation.
+  if (input.txnType === "transfer" || input.txnType === "investment") {
+    console.error("[/api/transactions] BUG: transfer/investment reached single-leg path", {
+      txnType: input.txnType,
+      direction: input.direction,
+      hasDestAccountId: !!input.destAccountId,
+    });
+    throw new ApiError(500, "Internal: transfer/investment without destination — refusing to save (this would lose money). Please report.");
+  }
   let saved;
   try {
     saved = await saveConfirmedTransaction(user.id, {
@@ -135,6 +146,7 @@ export const POST = handler(async (req: Request) => {
 
   return json(
     {
+      path: "single-leg",
       transaction: {
         id: saved.id,
         accountId: saved.accountId,
