@@ -1,10 +1,11 @@
-import { handler, json, requireCron } from "@/src/lib/api";
+import { handler, json, requireApiUser } from "@/src/lib/api";
 import { fetchAndStoreNews } from "@/src/lib/news-fetch";
 
-// Pull curated RSS, LLM-summarize + tag + "how this affects you", store in news_items.
-// Hit by a Coolify scheduled task (Bearer CRON_SECRET) — also callable manually.
-async function run(req: Request) {
-  requireCron(req);
+// Manual re-run of the news ingester. Normally fires automatically via the
+// in-process scheduler (src/lib/scheduler.ts); this endpoint exists so a logged-in
+// user can trigger it on demand.
+async function run() {
+  await requireApiUser();
   const result = await fetchAndStoreNews();
   return json({ ok: true, ...result });
 }

@@ -50,7 +50,7 @@ npm run dev                               # http://localhost:3000
    `docker-compose.yml` (3 services: `app`, `postgres`, `seaweedfs`).
 2. **Env vars** (Coolify "Environment Variables"): set everything from `.env.example`
    — at minimum `BETTER_AUTH_SECRET` (`openssl rand -base64 32`), `BETTER_AUTH_URL`
-   + `APP_BASE_URL` (your https domain), `OPENROUTER_API_KEY`, `CRON_SECRET` (random).
+   + `APP_BASE_URL` (your https domain), `OPENROUTER_API_KEY`.
    `DATABASE_URL` and `SEAWEEDFS_S3_ENDPOINT` are wired by the compose file to the
    internal service names — leave those alone unless you use a Coolify-managed
    Postgres instead. `SEAWEEDFS_S3_ACCESS_KEY` / `SEAWEEDFS_S3_SECRET_KEY` default
@@ -64,15 +64,22 @@ npm run dev                               # http://localhost:3000
    (port publishing for local runs lives in `docker-compose.local.yml`).
 4. **Migrations** run on container start (the entrypoint runs `scripts/migrate.mjs`
    before `next start`). Mastra creates its own `mastra_*` tables at runtime.
-5. **Scheduled tasks** (Coolify "Scheduled Tasks" on the `app` service, or system
-   cron) — hit the cron routes with the `x-cron-secret` header:
-   - `curl -fsS -H "x-cron-secret: $CRON_SECRET" https://YOURDOMAIN/api/cron/fx-rates` — **daily**
-   - `curl -fsS -H "x-cron-secret: $CRON_SECRET" https://YOURDOMAIN/api/cron/fetch-news` — **daily** (runs a few minutes — it's a batch LLM call)
-   - `curl -fsS -H "x-cron-secret: $CRON_SECRET" https://YOURDOMAIN/api/cron/weekly-suggestions` — **weekly**
+5. **Scheduled jobs run in-process** via `ui/src/lib/scheduler.ts` (registered at
+   server startup by Next's `instrumentation.ts`):
+   - `fx-rates` — every 6h
+   - `fetch-news` — every 4h
+   - `weekly-suggestions` — Mondays 09:00 (server TZ)
+
+   Plus a catch-up tick: 15s after a cold start it runs `fx-rates` and `fetch-news`
+   once, so a fresh deploy isn't empty. No Coolify Scheduled Task setup needed. To
+   trigger a job manually, hit `/api/cron/<job>` while signed in (uses your session
+   cookie — there is no `CRON_SECRET` anymore). Set `WEALTHFLOW_SCHEDULER=off` in
+   dev to disable the scheduler entirely.
 6. **First run**: open the domain → `/login` → **Create one** → add your real
-   accounts on `/accounts` → trigger `cron/fx-rates` once → upload a real
-   screenshot on `/upload` to confirm extraction → check the dashboard. Anyone can
-   sign up; each account's data is isolated.
+   accounts on `/accounts` → upload a real screenshot on `/` (Add tab) to confirm
+   extraction → check the dashboard. The scheduler will have fetched FX rates and
+   news within 15s of the container coming up. Anyone can sign up; each account's
+   data is isolated.
    On the phone: install the PWA (Add to Home Screen) → in a bank/fintech app,
    screenshot a transaction → Share → WealthFlow → it lands in the review flow.
 

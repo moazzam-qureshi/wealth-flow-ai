@@ -1,11 +1,11 @@
-import { handler, json, requireCron } from "@/src/lib/api";
+import { handler, json, requireApiUser } from "@/src/lib/api";
 import { fetchAndStoreFxRates } from "@/src/lib/fx-fetch";
 
-// Refresh FX rates (interbank from a free source; open-market if FX_OPENMARKET_URL
-// is configured). Hit by a Coolify scheduled task (Bearer CRON_SECRET) — also
-// callable manually. GET is allowed too so you can trigger it from a browser/curl.
-async function run(req: Request) {
-  requireCron(req);
+// Manual re-run of the FX-rates refresh. Normally fires automatically via the
+// in-process scheduler (src/lib/scheduler.ts); this endpoint exists so a logged-in
+// user can trigger it on demand (e.g. from the dashboard's "Get rates" button).
+async function run() {
+  await requireApiUser();
   const result = await fetchAndStoreFxRates();
   return json({ ok: true, ...result });
 }

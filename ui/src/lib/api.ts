@@ -20,19 +20,10 @@ export async function requireApiUser() {
   return session.user;
 }
 
-/**
- * Guards /api/cron/* — these are hit by Coolify scheduled tasks (not the browser),
- * so they're authed by a shared bearer token (CRON_SECRET) instead of a session.
- * If CRON_SECRET is unset (local dev), the check is skipped.
- */
-export function requireCron(req: Request) {
-  // import lazily to avoid pulling env at module-eval of routes
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return; // dev convenience
-  const auth = req.headers.get("authorization") ?? "";
-  const token = auth.startsWith("Bearer ") ? auth.slice(7) : req.headers.get("x-cron-secret") ?? "";
-  if (token !== secret) throw new ApiError(401, "Bad or missing cron secret");
-}
+// Cron jobs run in-process via the scheduler (see src/lib/scheduler.ts), so the
+// /api/cron/* HTTP routes exist only for *manual* re-runs (debugging, "run it
+// now"). They use the normal session auth (`requireApiUser`) — a logged-in user's
+// cookie is enough; no shared bearer secret. Random internet hits get a 401.
 
 export function json<T>(data: T, init?: ResponseInit) {
   return NextResponse.json(data, init);
