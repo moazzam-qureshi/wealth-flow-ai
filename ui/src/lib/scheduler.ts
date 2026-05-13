@@ -11,10 +11,12 @@
  *   - weekly-suggestions: Mondays at 09:00
  *
  * Server-only. Guards:
- *   - WEALTHFLOW_SCHEDULER=off → skipped entirely (set in dev to avoid noise)
- *   - Each job is wrapped in try/catch so a failure can't kill the process
+ *   - Off by default outside production (so `npm run dev` HMR restarts don't keep
+ *     re-firing the catch-up tick → repeat LLM calls). Set WEALTHFLOW_SCHEDULER=on
+ *     locally to turn it on; set it to "off" in production to disable it there.
+ *   - Each job is wrapped in try/catch so a failure can't kill the process.
  *   - Re-entrant: we record running jobs and skip a second tick if the previous
- *     run hasn't finished
+ *     run hasn't finished.
  */
 import cron from "node-cron";
 import { fetchAndStoreFxRates } from "./fx-fetch";
@@ -34,8 +36,11 @@ let started = false;
 
 export function startScheduler(): void {
   if (started) return; // hot-reload guard
-  if (process.env.WEALTHFLOW_SCHEDULER === "off") {
-    console.log("[scheduler] disabled (WEALTHFLOW_SCHEDULER=off)");
+  // Default: on in production, off everywhere else. Explicit flag wins either way.
+  const flag = process.env.WEALTHFLOW_SCHEDULER;
+  const enabled = flag === "on" ? true : flag === "off" ? false : process.env.NODE_ENV === "production";
+  if (!enabled) {
+    console.log(`[scheduler] disabled (NODE_ENV=${process.env.NODE_ENV}, WEALTHFLOW_SCHEDULER=${flag ?? "unset"}). Set WEALTHFLOW_SCHEDULER=on to enable.`);
     return;
   }
   started = true;

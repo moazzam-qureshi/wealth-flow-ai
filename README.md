@@ -71,10 +71,16 @@ npm run dev                               # http://localhost:3000
    - `weekly-suggestions` — Mondays 09:00 (server TZ)
 
    Plus a catch-up tick: 15s after a cold start it runs `fx-rates` and `fetch-news`
-   once, so a fresh deploy isn't empty. No Coolify Scheduled Task setup needed. To
-   trigger a job manually, hit `/api/cron/<job>` while signed in (uses your session
-   cookie — there is no `CRON_SECRET` anymore). Set `WEALTHFLOW_SCHEDULER=off` in
-   dev to disable the scheduler entirely.
+   once, so a fresh deploy isn't empty. No Coolify Scheduled Task setup needed.
+
+   The scheduler is **on by default in production** (when `NODE_ENV=production`)
+   and **off by default in dev**, so `npm run dev` HMR restarts don't keep
+   re-firing the catch-up tick (which would burn LLM calls on the news job). To
+   force-enable it locally: `WEALTHFLOW_SCHEDULER=on`. To force-disable it in
+   prod: `WEALTHFLOW_SCHEDULER=off`.
+
+   To trigger a job manually, hit `/api/cron/<job>` while signed in — uses your
+   session cookie; there is no `CRON_SECRET` anymore.
 6. **First run**: open the domain → `/login` → **Create one** → add your real
    accounts on `/accounts` → upload a real screenshot on `/` (Add tab) to confirm
    extraction → check the dashboard. The scheduler will have fetched FX rates and
